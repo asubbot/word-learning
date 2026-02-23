@@ -137,6 +137,8 @@ func (h *handler) handleCommand(ctx context.Context, msg *tgbotapi.Message) erro
 		return h.sendText(msg.Chat.ID, helpMessage())
 	case "help":
 		return h.sendText(msg.Chat.ID, helpMessage())
+	case "whoami":
+		return h.sendText(msg.Chat.ID, fmt.Sprintf("Your Telegram user ID: %d", userID))
 	case "health":
 		return h.sendText(msg.Chat.ID, "OK")
 	case "deck_create":
@@ -324,6 +326,7 @@ func helpMessage() string {
 
 /start - show welcome message
 /help - show this help
+/whoami - show your Telegram user ID
 /health - health check
 /deck_create <name> <from> <to> - create deck
 /deck_list - list your decks

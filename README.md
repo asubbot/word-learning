@@ -161,6 +161,7 @@ go run ./cmd/wordbot
 
 - `/start` - show help.
 - `/help` - show help.
+- `/whoami` - show your Telegram user ID.
 - `/health` - health check.
 - `/deck_create <name> <from> <to>` - create deck.
 - `/deck_list` - list your decks.
