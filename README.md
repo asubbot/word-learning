@@ -33,7 +33,7 @@ go run ./cmd/wordcli deck create --name "English Basics" --from EN --to RU
 ### 2) Add a card
 
 ```bash
-go run ./cmd/wordcli card add --deck 1 --front "banished" --back "exiled" --pronunciation "/banished/" --description "He was banished from the kingdom."
+go run ./cmd/wordcli card add --deck 1 --front "banished" --back "изгнанный" --pronunciation "/banished/" --description "He was banished from the kingdom."
 ```
 
 ### 3) Get a card
@@ -182,7 +182,7 @@ rm -f ./e2e.db
 go run ./cmd/wordcli --db ./e2e.db deck create --name "English Basics" --from EN --to RU
 
 # 3) Add a card
-go run ./cmd/wordcli --db ./e2e.db card add --deck 1 --front "banished" --back "exiled" --pronunciation "/banished/" --description "He was banished from the kingdom."
+go run ./cmd/wordcli --db ./e2e.db card add --deck 1 --front "banished" --back "изгнанный" --pronunciation "/banished/" --description "He was banished from the kingdom."
 
 # 4) Verify card is active
 go run ./cmd/wordcli --db ./e2e.db card list --deck 1 --status active
