@@ -20,13 +20,14 @@ type Deck struct {
 }
 
 type Card struct {
-	ID           int64
-	DeckID       int64
-	Front        string
-	Back         string
-	Description  string
-	Status       CardStatus
-	SnoozedUntil *time.Time
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	ID            int64
+	DeckID        int64
+	Front         string
+	Back          string
+	Pronunciation string
+	Description   string
+	Status        CardStatus
+	SnoozedUntil  *time.Time
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }

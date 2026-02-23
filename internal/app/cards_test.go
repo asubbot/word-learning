@@ -91,11 +91,11 @@ func TestServiceCardLifecycle(t *testing.T) {
 	ctx := context.Background()
 	deckID := mustCreateDeck(t, svc)
 
-	card, err := svc.AddCard(ctx, deckID, " banished ", " изгнанный ", "  sample ")
+	card, err := svc.AddCard(ctx, deckID, " banished ", " изгнанный ", " /banished/ ", "  sample ")
 	if err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
-	if card.Front != "banished" || card.Back != "изгнанный" || card.Description != "sample" {
+	if card.Front != "banished" || card.Back != "изгнанный" || card.Pronunciation != "/banished/" || card.Description != "sample" {
 		t.Fatalf("unexpected trimmed values: %#v", card)
 	}
 
@@ -179,16 +179,16 @@ func TestServiceCardValidationAndNotFound(t *testing.T) {
 	ctx := context.Background()
 	deckID := mustCreateDeck(t, svc)
 
-	if _, err := svc.AddCard(ctx, 0, "front", "back", "desc"); err == nil {
+	if _, err := svc.AddCard(ctx, 0, "front", "back", "/f/", "desc"); err == nil {
 		t.Fatal("expected error for invalid deck id")
 	}
-	if _, err := svc.AddCard(ctx, deckID, " ", "back", "desc"); err == nil {
+	if _, err := svc.AddCard(ctx, deckID, " ", "back", "/f/", "desc"); err == nil {
 		t.Fatal("expected error for empty front")
 	}
-	if _, err := svc.AddCard(ctx, deckID, "front", " ", "desc"); err == nil {
+	if _, err := svc.AddCard(ctx, deckID, "front", " ", "/f/", "desc"); err == nil {
 		t.Fatal("expected error for empty back")
 	}
-	if _, err := svc.AddCard(ctx, 999, "front", "back", "desc"); err == nil {
+	if _, err := svc.AddCard(ctx, 999, "front", "back", "/f/", "desc"); err == nil {
 		t.Fatal("expected error for unknown deck")
 	}
 

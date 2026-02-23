@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS cards (
   deck_id INTEGER NOT NULL,
   front TEXT NOT NULL,
   back TEXT NOT NULL,
+  pronunciation TEXT NOT NULL DEFAULT '',
   description TEXT NOT NULL DEFAULT '',
   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'snoozed', 'removed')),
   snoozed_until DATETIME NULL,

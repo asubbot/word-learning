@@ -11,10 +11,11 @@ import (
 )
 
 type CardCreateParams struct {
-	DeckID      int64
-	Front       string
-	Back        string
-	Description string
+	DeckID        int64
+	Front         string
+	Back          string
+	Pronunciation string
+	Description   string
 }
 
 func (s *Store) DeckExists(ctx context.Context, deckID int64) (bool, error) {
@@ -29,10 +30,11 @@ func (s *Store) DeckExists(ctx context.Context, deckID int64) (bool, error) {
 func (s *Store) CreateCard(ctx context.Context, params CardCreateParams) (domain.Card, error) {
 	result, err := s.db.ExecContext(
 		ctx,
-		`INSERT INTO cards (deck_id, front, back, description, status) VALUES (?, ?, ?, ?, 'active')`,
+		`INSERT INTO cards (deck_id, front, back, pronunciation, description, status) VALUES (?, ?, ?, ?, ?, 'active')`,
 		params.DeckID,
 		params.Front,
 		params.Back,
+		params.Pronunciation,
 		params.Description,
 	)
 	if err != nil {
@@ -45,17 +47,18 @@ func (s *Store) CreateCard(ctx context.Context, params CardCreateParams) (domain
 	}
 
 	return domain.Card{
-		ID:          id,
-		DeckID:      params.DeckID,
-		Front:       params.Front,
-		Back:        params.Back,
-		Description: params.Description,
-		Status:      domain.CardStatusActive,
+		ID:            id,
+		DeckID:        params.DeckID,
+		Front:         params.Front,
+		Back:          params.Back,
+		Pronunciation: params.Pronunciation,
+		Description:   params.Description,
+		Status:        domain.CardStatusActive,
 	}, nil
 }
 
 func (s *Store) ListCards(ctx context.Context, deckID int64, status *domain.CardStatus) (cards []domain.Card, err error) {
-	query := `SELECT id, deck_id, front, back, description, status, snoozed_until FROM cards WHERE deck_id = ?`
+	query := `SELECT id, deck_id, front, back, pronunciation, description, status, snoozed_until FROM cards WHERE deck_id = ?`
 	args := []any{deckID}
 	if status != nil {
 		query += ` AND status = ?`
@@ -111,7 +114,7 @@ func (s *Store) SetCardStatus(ctx context.Context, cardID int64, status domain.C
 func (s *Store) NextCardForDeck(ctx context.Context, deckID int64, now time.Time) (*domain.Card, error) {
 	row := s.db.QueryRowContext(
 		ctx,
-		`SELECT id, deck_id, front, back, description, status, snoozed_until
+		`SELECT id, deck_id, front, back, pronunciation, description, status, snoozed_until
 		 FROM cards
 		 WHERE deck_id = ?
 		   AND status != 'removed'
@@ -138,7 +141,7 @@ func scanCard(scanner interface{ Scan(dest ...any) error }) (domain.Card, error)
 	var status string
 	var snoozedUntil sql.NullTime
 
-	if err := scanner.Scan(&card.ID, &card.DeckID, &card.Front, &card.Back, &card.Description, &status, &snoozedUntil); err != nil {
+	if err := scanner.Scan(&card.ID, &card.DeckID, &card.Front, &card.Back, &card.Pronunciation, &card.Description, &status, &snoozedUntil); err != nil {
 		return domain.Card{}, fmt.Errorf("scan card row: %w", err)
 	}
 	card.Status = domain.CardStatus(status)

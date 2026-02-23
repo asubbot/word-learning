@@ -33,7 +33,7 @@ go run ./cmd/wordcli deck create --name "English Basics" --from EN --to RU
 ### 2) Добавить карточку
 
 ```bash
-go run ./cmd/wordcli card add --deck 1 --front "banished" --back "изгнанный" --description "He was banished from the kingdom."
+go run ./cmd/wordcli card add --deck 1 --front "banished" --back "изгнанный" --pronunciation "/banished/" --description "He was banished from the kingdom."
 ```
 
 ### 3) Получить карточку
@@ -63,7 +63,7 @@ go run ./cmd/wordcli card dont-remember --id 1
 
 ### Card
 
-- `card add --deck --front --back [--description]`
+- `card add --deck --front --back [--pronunciation] [--description]`
 - `card list --deck [--status active|snoozed|removed]`
 - `card get --deck`
 - `card remember --id`
@@ -89,8 +89,9 @@ go run ./cmd/wordcli card dont-remember --id 1
 
 ### Card
 
-- `card add --deck <deck_id> --front "<text>" --back "<text>" [--description "<text>"]`
+- `card add --deck <deck_id> --front "<text>" --back "<text>" [--pronunciation "<text>"] [--description "<text>"]`
   - добавляет карточку в указанную колоду.
+  - `--pronunciation` опционально сохраняет транскрипцию/подсказку произношения.
 - `card list --deck <deck_id> [--status active|snoozed|removed]`
   - выводит карточки колоды;
   - с `--status` фильтрует карточки по статусу.
@@ -180,7 +181,7 @@ rm -f ./e2e.db
 go run ./cmd/wordcli --db ./e2e.db deck create --name "English Basics" --from EN --to RU
 
 # 3) Добавить карточку
-go run ./cmd/wordcli --db ./e2e.db card add --deck 1 --front "banished" --back "изгнанный" --description "He was banished from the kingdom."
+go run ./cmd/wordcli --db ./e2e.db card add --deck 1 --front "banished" --back "изгнанный" --pronunciation "/banished/" --description "He was banished from the kingdom."
 
 # 4) Убедиться, что карточка в active
 go run ./cmd/wordcli --db ./e2e.db card list --deck 1 --status active

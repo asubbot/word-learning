@@ -22,6 +22,7 @@
 - `id`
 - `front` — лицевая сторона (слово/фраза)
 - `back` — оборотная сторона (перевод)
+- `pronunciation` — произношение/транскрипция (опционально)
 - `description` - пояснение/пример
 - `language_from`
 - `language_to`
@@ -49,6 +50,7 @@
 - `deck_id` (FK -> decks.id)
 - `front`
 - `back`
+- `pronunciation`
 - `description`
 - `status` (`active`, `snoozed`, `removed`)
 - `snoozed_until` (nullable)

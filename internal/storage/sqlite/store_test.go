@@ -30,10 +30,11 @@ func TestNextCardForDeck_RespectsStatuses(t *testing.T) {
 	}
 
 	card, err := store.CreateCard(ctx, CardCreateParams{
-		DeckID:      deck.ID,
-		Front:       "banished",
-		Back:        "изгнанный",
-		Description: "sample",
+		DeckID:        deck.ID,
+		Front:         "banished",
+		Back:          "изгнанный",
+		Pronunciation: "/banished/",
+		Description:   "sample",
 	})
 	if err != nil {
 		t.Fatalf("create card: %v", err)

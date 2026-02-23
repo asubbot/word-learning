@@ -13,13 +13,14 @@ import (
 
 var ErrCardNotFound = errors.New("card not found")
 
-func (s *Service) AddCard(ctx context.Context, deckID int64, front, back, description string) (domain.Card, error) {
+func (s *Service) AddCard(ctx context.Context, deckID int64, front, back, pronunciation, description string) (domain.Card, error) {
 	if deckID <= 0 {
 		return domain.Card{}, fmt.Errorf("--deck must be a positive integer")
 	}
 
 	front = strings.TrimSpace(front)
 	back = strings.TrimSpace(back)
+	pronunciation = strings.TrimSpace(pronunciation)
 	description = strings.TrimSpace(description)
 	if front == "" {
 		return domain.Card{}, fmt.Errorf("front must not be empty")
@@ -37,10 +38,11 @@ func (s *Service) AddCard(ctx context.Context, deckID int64, front, back, descri
 	}
 
 	return s.store.CreateCard(ctx, sqlite.CardCreateParams{
-		DeckID:      deckID,
-		Front:       front,
-		Back:        back,
-		Description: description,
+		DeckID:        deckID,
+		Front:         front,
+		Back:          back,
+		Pronunciation: pronunciation,
+		Description:   description,
 	})
 }
 

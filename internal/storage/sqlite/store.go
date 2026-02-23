@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 
 	_ "modernc.org/sqlite"
 )
@@ -23,6 +24,7 @@ CREATE TABLE IF NOT EXISTS cards (
   deck_id INTEGER NOT NULL,
   front TEXT NOT NULL,
   back TEXT NOT NULL,
+  pronunciation TEXT NOT NULL DEFAULT '',
   description TEXT NOT NULL DEFAULT '',
   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'snoozed', 'removed')),
   snoozed_until DATETIME NULL,
@@ -65,7 +67,22 @@ func (s *Store) InitSchema(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, schemaSQL); err != nil {
 		return fmt.Errorf("initialize schema: %w", err)
 	}
+
+	if _, err := s.db.ExecContext(ctx, `ALTER TABLE cards ADD COLUMN pronunciation TEXT NOT NULL DEFAULT ''`); err != nil {
+		// Existing databases already migrated should ignore duplicate column errors.
+		if !isDuplicateColumnError(err) {
+			return fmt.Errorf("migrate cards.pronunciation: %w", err)
+		}
+	}
+
 	return nil
+}
+
+func isDuplicateColumnError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "duplicate column name")
 }
 
 func (s *Store) DB() *sql.DB {

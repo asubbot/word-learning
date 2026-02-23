@@ -76,15 +76,15 @@ func TestListCardsWithStatusFilter(t *testing.T) {
 		t.Fatalf("CreateDeck: %v", err)
 	}
 
-	activeCard, err := store.CreateCard(ctx, CardCreateParams{DeckID: deck.ID, Front: "a", Back: "a", Description: ""})
+	activeCard, err := store.CreateCard(ctx, CardCreateParams{DeckID: deck.ID, Front: "a", Back: "a", Pronunciation: "/a/", Description: ""})
 	if err != nil {
 		t.Fatalf("CreateCard active: %v", err)
 	}
-	snoozedCard, err := store.CreateCard(ctx, CardCreateParams{DeckID: deck.ID, Front: "b", Back: "b", Description: ""})
+	snoozedCard, err := store.CreateCard(ctx, CardCreateParams{DeckID: deck.ID, Front: "b", Back: "b", Pronunciation: "/b/", Description: ""})
 	if err != nil {
 		t.Fatalf("CreateCard snoozed: %v", err)
 	}
-	removedCard, err := store.CreateCard(ctx, CardCreateParams{DeckID: deck.ID, Front: "c", Back: "c", Description: ""})
+	removedCard, err := store.CreateCard(ctx, CardCreateParams{DeckID: deck.ID, Front: "c", Back: "c", Pronunciation: "/c/", Description: ""})
 	if err != nil {
 		t.Fatalf("CreateCard removed: %v", err)
 	}
@@ -113,6 +113,9 @@ func TestListCardsWithStatusFilter(t *testing.T) {
 	if len(activeCards) != 1 || activeCards[0].ID != activeCard.ID {
 		t.Fatalf("unexpected active cards: %#v", activeCards)
 	}
+	if activeCards[0].Pronunciation != "/a/" {
+		t.Fatalf("unexpected pronunciation for active card: %q", activeCards[0].Pronunciation)
+	}
 
 	snoozedStatus := domain.CardStatusSnoozed
 	snoozedCards, err := store.ListCards(ctx, deck.ID, &snoozedStatus)
@@ -121,6 +124,9 @@ func TestListCardsWithStatusFilter(t *testing.T) {
 	}
 	if len(snoozedCards) != 1 || snoozedCards[0].ID != snoozedCard.ID {
 		t.Fatalf("unexpected snoozed cards: %#v", snoozedCards)
+	}
+	if snoozedCards[0].Pronunciation != "/b/" {
+		t.Fatalf("unexpected pronunciation for snoozed card: %q", snoozedCards[0].Pronunciation)
 	}
 	if snoozedCards[0].SnoozedUntil == nil {
 		t.Fatal("expected snoozed_until for snoozed card")

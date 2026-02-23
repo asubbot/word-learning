@@ -23,9 +23,9 @@ func printCards(cards []domain.Card) {
 		return
 	}
 
-	fmt.Println("ID\tDECK\tSTATUS\tFRONT\tBACK")
+	fmt.Println("ID\tDECK\tSTATUS\tFRONT\tBACK\tPRONUNCIATION")
 	for _, card := range cards {
-		fmt.Printf("%d\t%d\t%s\t%s\t%s\n", card.ID, card.DeckID, card.Status, card.Front, card.Back)
+		fmt.Printf("%d\t%d\t%s\t%s\t%s\t%s\n", card.ID, card.DeckID, card.Status, card.Front, card.Back, card.Pronunciation)
 	}
 }
 
@@ -33,6 +33,9 @@ func printCardDetails(card domain.Card) {
 	fmt.Printf("Card ID: %d\n", card.ID)
 	fmt.Printf("Front: %s\n", card.Front)
 	fmt.Printf("Back: %s\n", card.Back)
+	if card.Pronunciation != "" {
+		fmt.Printf("Pronunciation: %s\n", card.Pronunciation)
+	}
 	if card.Description != "" {
 		fmt.Printf("Description: %s\n", card.Description)
 	}
