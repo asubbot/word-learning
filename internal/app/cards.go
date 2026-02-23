@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -14,9 +15,9 @@ import (
 var ErrCardNotFound = errors.New("card not found")
 
 type DeckStats struct {
-	Active  int64
-	Snoozed int64
-	Total   int64
+	Active    int64
+	Postponed int64
+	Total     int64
 }
 
 func (s *Service) AddCard(ctx context.Context, deckID int64, front, back, pronunciation, description string) (domain.Card, error) {
@@ -89,7 +90,7 @@ func (s *Service) RestoreCard(ctx context.Context, cardID int64) error {
 		return fmt.Errorf("--id must be a positive integer")
 	}
 
-	updated, err := s.store.SetCardStatus(ctx, cardID, domain.CardStatusActive, nil)
+	updated, err := s.store.SetCardActiveNow(ctx, cardID, time.Now().UTC())
 	if err != nil {
 		return err
 	}
@@ -104,8 +105,27 @@ func (s *Service) RememberCard(ctx context.Context, cardID int64) error {
 		return fmt.Errorf("--id must be a positive integer")
 	}
 
-	snoozedUntil := time.Now().UTC().Add(24 * time.Hour)
-	updated, err := s.store.SetCardStatus(ctx, cardID, domain.CardStatusSnoozed, &snoozedUntil)
+	card, err := s.store.GetCardByID(ctx, cardID)
+	if err != nil {
+		return err
+	}
+	if card == nil {
+		return ErrCardNotFound
+	}
+
+	now := time.Now().UTC()
+	intervalSec := nextRememberIntervalSec(card.IntervalSec, card.Ease)
+	ease := math.Min(2.8, maxEase(card.Ease)+0.05)
+
+	updated, err := s.store.UpdateCardSchedule(
+		ctx,
+		cardID,
+		now.Add(time.Duration(intervalSec)*time.Second),
+		intervalSec,
+		ease,
+		card.Lapses,
+		now,
+	)
 	if err != nil {
 		return err
 	}
@@ -120,7 +140,28 @@ func (s *Service) DontRememberCard(ctx context.Context, cardID int64) error {
 		return fmt.Errorf("--id must be a positive integer")
 	}
 
-	updated, err := s.store.SetCardStatus(ctx, cardID, domain.CardStatusActive, nil)
+	card, err := s.store.GetCardByID(ctx, cardID)
+	if err != nil {
+		return err
+	}
+	if card == nil {
+		return ErrCardNotFound
+	}
+
+	now := time.Now().UTC()
+	lapses := card.Lapses + 1
+	ease := math.Max(1.3, maxEase(card.Ease)-0.2)
+	const shortIntervalSec int64 = 600
+
+	updated, err := s.store.UpdateCardSchedule(
+		ctx,
+		cardID,
+		now.Add(time.Duration(shortIntervalSec)*time.Second),
+		shortIntervalSec,
+		ease,
+		lapses,
+		now,
+	)
 	if err != nil {
 		return err
 	}
@@ -142,14 +183,15 @@ func (s *Service) NextCardWithStats(ctx context.Context, deckID int64) (*domain.
 	if err != nil {
 		return nil, DeckStats{}, err
 	}
-	stats, err := s.store.DeckCardStats(ctx, deckID)
+	now := time.Now().UTC()
+	stats, err := s.store.DeckCardStats(ctx, deckID, now)
 	if err != nil {
 		return nil, DeckStats{}, err
 	}
 	return card, DeckStats{
-		Active:  stats.Active,
-		Snoozed: stats.Snoozed,
-		Total:   stats.Total,
+		Active:    stats.Active,
+		Postponed: stats.Postponed,
+		Total:     stats.Total,
 	}, nil
 }
 
@@ -164,4 +206,23 @@ func parseCardStatus(value string) (domain.CardStatus, error) {
 	default:
 		return "", fmt.Errorf("--status must be one of: active, snoozed, removed")
 	}
+}
+
+func nextRememberIntervalSec(currentInterval int64, ease float64) int64 {
+	const oneDaySec int64 = 86400
+	if currentInterval <= 0 {
+		return oneDaySec
+	}
+	grown := int64(math.Round(float64(currentInterval) * maxEase(ease)))
+	if grown < oneDaySec {
+		return oneDaySec
+	}
+	return grown
+}
+
+func maxEase(value float64) float64 {
+	if value <= 0 {
+		return 2.5
+	}
+	return value
 }

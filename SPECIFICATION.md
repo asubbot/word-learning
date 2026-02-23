@@ -28,6 +28,11 @@
 - `language_to`
 - `status` (`active`, `snoozed`, `removed`)
 - `snoozed_until` (timestamp, если применимо)
+- `next_due_at` (timestamp следующего показа по due-date)
+- `interval_sec` (текущий интервал повторения)
+- `ease` (коэффициент роста интервала)
+- `lapses` (количество провалов)
+- `last_reviewed_at` (время последнего ответа)
 - `created_at`, `updated_at`
 
 
@@ -54,5 +59,10 @@
 - `description`
 - `status` (`active`, `snoozed`, `removed`)
 - `snoozed_until` (nullable)
+- `next_due_at`
+- `interval_sec`
+- `ease`
+- `lapses`
+- `last_reviewed_at`
 - `created_at`
 - `updated_at`

@@ -8,8 +8,8 @@ CLI-инструмент на Go для изучения иностранных 
 - Управление карточками: добавление, список, удаление, восстановление.
 - Режим практики в CLI:
   - `card get` — следующая доступная карточка.
-  - `card remember` — скрыть карточку на 24 часа.
-  - `card dont-remember` — вернуть карточку в активную ротацию.
+  - `card remember` — увеличить интервал до следующего показа (due-date scheduler).
+  - `card dont-remember` — сократить интервал до короткого повтора (10 минут).
 - Локальное надежное хранение в SQLite.
 
 ## Требования
@@ -42,13 +42,13 @@ go run ./cmd/wordcli card add --deck 1 --front "banished" --back "изгнанн
 go run ./cmd/wordcli card get --deck 1
 ```
 
-### 4) Отметить как помню (snooze 24h)
+### 4) Отметить как помню (увеличить интервал)
 
 ```bash
 go run ./cmd/wordcli card remember --id 1
 ```
 
-### 5) Вернуть в активные
+### 5) Отметить как не помню (быстрый повтор)
 
 ```bash
 go run ./cmd/wordcli card dont-remember --id 1
@@ -64,7 +64,7 @@ go run ./cmd/wordcli card dont-remember --id 1
 ### Card
 
 - `card add --deck --front --back [--pronunciation] [--description]`
-- `card list --deck [--status active|snoozed|removed]`
+- `card list --deck [--status active|snoozed|removed]` (статус `snoozed` сохранен для совместимости со старыми данными)
 - `card get --deck`
 - `card remember --id`
 - `card dont-remember --id`
@@ -97,13 +97,14 @@ go run ./cmd/wordcli card dont-remember --id 1
   - с `--status` фильтрует карточки по статусу.
 - `card get --deck <deck_id>`
   - выводит следующую доступную карточку для изучения;
-  - показывает только `active` и `snoozed` с истекшим `snoozed_until`;
+  - показывает карточки по due-date (`next_due_at <= now`);
+  - legacy-поддержка: `snoozed` с истекшим `snoozed_until` тоже участвуют в выдаче;
   - `removed` не участвует в выборке.
   - после карточки печатает сводку: `Активных X, отложено Y, всего Z`.
 - `card remember --id <card_id>`
-  - ставит статус `snoozed` на 24 часа.
+  - увеличивает интервал повторения и переносит карточку в будущее (`next_due_at`).
 - `card dont-remember --id <card_id>`
-  - устанавливает статус `active` (карточка сразу снова в ротации).
+  - уменьшает интервал и ставит короткий повтор через 10 минут.
 - `card remove --id <card_id>`
   - мягко удаляет карточку из активной ротации (`status=removed`).
 - `card restore --id <card_id>`
@@ -190,16 +191,16 @@ go run ./cmd/wordcli --db ./e2e.db card list --deck 1 --status active
 # 5) Получить следующую карточку
 go run ./cmd/wordcli --db ./e2e.db card get --deck 1
 
-# 6) Пометить как remember (snooze на 24 часа)
+# 6) Пометить как remember (карточка уходит в будущий due)
 go run ./cmd/wordcli --db ./e2e.db card remember --id 1
 
-# 7) Проверить, что карточка временно не выдается
+# 7) Проверить, что карточка временно не выдается (due еще не наступил)
 go run ./cmd/wordcli --db ./e2e.db card get --deck 1
 
-# 8) Вернуть карточку в active
+# 8) Отметить как не помню (ставим короткий повтор)
 go run ./cmd/wordcli --db ./e2e.db card dont-remember --id 1
 
-# 9) Проверить, что снова выдается
+# 9) Сразу после dont-remember карточка еще может не выдаваться (ожидаем короткую паузу ~10 минут)
 go run ./cmd/wordcli --db ./e2e.db card get --deck 1
 
 # 10) Удалить карточку из ротации

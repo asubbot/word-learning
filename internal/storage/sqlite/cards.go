@@ -19,9 +19,9 @@ type CardCreateParams struct {
 }
 
 type DeckCardStats struct {
-	Active  int64
-	Snoozed int64
-	Total   int64
+	Active    int64
+	Postponed int64
+	Total     int64
 }
 
 func (s *Store) DeckExists(ctx context.Context, deckID int64) (bool, error) {
@@ -52,19 +52,18 @@ func (s *Store) CreateCard(ctx context.Context, params CardCreateParams) (domain
 		return domain.Card{}, fmt.Errorf("get new card id: %w", err)
 	}
 
-	return domain.Card{
-		ID:            id,
-		DeckID:        params.DeckID,
-		Front:         params.Front,
-		Back:          params.Back,
-		Pronunciation: params.Pronunciation,
-		Description:   params.Description,
-		Status:        domain.CardStatusActive,
-	}, nil
+	card, err := s.GetCardByID(ctx, id)
+	if err != nil {
+		return domain.Card{}, err
+	}
+	if card == nil {
+		return domain.Card{}, fmt.Errorf("created card %d not found", id)
+	}
+	return *card, nil
 }
 
 func (s *Store) ListCards(ctx context.Context, deckID int64, status *domain.CardStatus) (cards []domain.Card, err error) {
-	query := `SELECT id, deck_id, front, back, pronunciation, description, status, snoozed_until FROM cards WHERE deck_id = ?`
+	query := `SELECT id, deck_id, front, back, pronunciation, description, status, snoozed_until, next_due_at, interval_sec, ease, lapses, last_reviewed_at FROM cards WHERE deck_id = ?`
 	args := []any{deckID}
 	if status != nil {
 		query += ` AND status = ?`
@@ -84,17 +83,35 @@ func (s *Store) ListCards(ctx context.Context, deckID int64, status *domain.Card
 
 	cards = make([]domain.Card, 0)
 	for rows.Next() {
-		card, err := scanCard(rows)
-		if err != nil {
-			return nil, err
+		card, scanErr := scanCard(rows)
+		if scanErr != nil {
+			return nil, scanErr
 		}
 		cards = append(cards, card)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate cards: %w", err)
+	if rowsErr := rows.Err(); rowsErr != nil {
+		return nil, fmt.Errorf("iterate cards: %w", rowsErr)
 	}
 
 	return cards, nil
+}
+
+func (s *Store) GetCardByID(ctx context.Context, cardID int64) (*domain.Card, error) {
+	row := s.db.QueryRowContext(
+		ctx,
+		`SELECT id, deck_id, front, back, pronunciation, description, status, snoozed_until, next_due_at, interval_sec, ease, lapses, last_reviewed_at
+		 FROM cards
+		 WHERE id = ?`,
+		cardID,
+	)
+	card, err := scanCard(row)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &card, nil
 }
 
 func (s *Store) SetCardStatus(ctx context.Context, cardID int64, status domain.CardStatus, snoozedUntil *time.Time) (bool, error) {
@@ -117,18 +134,71 @@ func (s *Store) SetCardStatus(ctx context.Context, cardID int64, status domain.C
 	return rows > 0, nil
 }
 
+func (s *Store) SetCardActiveNow(ctx context.Context, cardID int64, now time.Time) (bool, error) {
+	result, err := s.db.ExecContext(
+		ctx,
+		`UPDATE cards
+		 SET status = 'active', snoozed_until = NULL, next_due_at = ?, updated_at = CURRENT_TIMESTAMP
+		 WHERE id = ?`,
+		now.UTC(),
+		cardID,
+	)
+	if err != nil {
+		return false, fmt.Errorf("set card active now: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("count updated rows: %w", err)
+	}
+	return rows > 0, nil
+}
+
+func (s *Store) UpdateCardSchedule(ctx context.Context, cardID int64, nextDueAt time.Time, intervalSec int64, ease float64, lapses int64, lastReviewedAt time.Time) (bool, error) {
+	result, err := s.db.ExecContext(
+		ctx,
+		`UPDATE cards
+		 SET status = 'active',
+		     snoozed_until = NULL,
+		     next_due_at = ?,
+		     interval_sec = ?,
+		     ease = ?,
+		     lapses = ?,
+		     last_reviewed_at = ?,
+		     updated_at = CURRENT_TIMESTAMP
+		 WHERE id = ?`,
+		nextDueAt.UTC(),
+		intervalSec,
+		ease,
+		lapses,
+		lastReviewedAt.UTC(),
+		cardID,
+	)
+	if err != nil {
+		return false, fmt.Errorf("update card schedule: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("count updated rows: %w", err)
+	}
+	return rows > 0, nil
+}
+
 func (s *Store) NextCardForDeck(ctx context.Context, deckID int64, now time.Time) (*domain.Card, error) {
 	row := s.db.QueryRowContext(
 		ctx,
-		`SELECT id, deck_id, front, back, pronunciation, description, status, snoozed_until
+		`SELECT id, deck_id, front, back, pronunciation, description, status, snoozed_until, next_due_at, interval_sec, ease, lapses, last_reviewed_at
 		 FROM cards
 		 WHERE deck_id = ?
 		   AND status != 'removed'
-		   AND (status = 'active' OR (status = 'snoozed' AND (snoozed_until IS NULL OR snoozed_until <= ?)))
-		 ORDER BY id ASC
+		   AND (
+		     (status = 'active' AND next_due_at <= ?)
+		     OR (status = 'snoozed' AND (snoozed_until IS NULL OR snoozed_until <= ?))
+		   )
+		 ORDER BY COALESCE(next_due_at, snoozed_until, created_at) ASC, id ASC
 		 LIMIT 1`,
 		deckID,
-		now,
+		now.UTC(),
+		now.UTC(),
 	)
 
 	card, err := scanCard(row)
@@ -142,18 +212,20 @@ func (s *Store) NextCardForDeck(ctx context.Context, deckID int64, now time.Time
 	return &card, nil
 }
 
-func (s *Store) DeckCardStats(ctx context.Context, deckID int64) (DeckCardStats, error) {
+func (s *Store) DeckCardStats(ctx context.Context, deckID int64, now time.Time) (DeckCardStats, error) {
 	var stats DeckCardStats
 	if err := s.db.QueryRowContext(
 		ctx,
 		`SELECT
-			COALESCE(SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN status = 'snoozed' THEN 1 ELSE 0 END), 0),
-			COUNT(*)
+			COALESCE(SUM(CASE WHEN status = 'active' AND next_due_at <= ? THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN (status = 'active' AND next_due_at > ?) OR status = 'snoozed' THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN status != 'removed' THEN 1 ELSE 0 END), 0)
 		 FROM cards
 		 WHERE deck_id = ?`,
+		now.UTC(),
+		now.UTC(),
 		deckID,
-	).Scan(&stats.Active, &stats.Snoozed, &stats.Total); err != nil {
+	).Scan(&stats.Active, &stats.Postponed, &stats.Total); err != nil {
 		return DeckCardStats{}, fmt.Errorf("get deck card stats: %w", err)
 	}
 	return stats, nil
@@ -163,13 +235,33 @@ func scanCard(scanner interface{ Scan(dest ...any) error }) (domain.Card, error)
 	var card domain.Card
 	var status string
 	var snoozedUntil sql.NullTime
+	var nextDueAt time.Time
+	var lastReviewedAt sql.NullTime
 
-	if err := scanner.Scan(&card.ID, &card.DeckID, &card.Front, &card.Back, &card.Pronunciation, &card.Description, &status, &snoozedUntil); err != nil {
+	if err := scanner.Scan(
+		&card.ID,
+		&card.DeckID,
+		&card.Front,
+		&card.Back,
+		&card.Pronunciation,
+		&card.Description,
+		&status,
+		&snoozedUntil,
+		&nextDueAt,
+		&card.IntervalSec,
+		&card.Ease,
+		&card.Lapses,
+		&lastReviewedAt,
+	); err != nil {
 		return domain.Card{}, fmt.Errorf("scan card row: %w", err)
 	}
 	card.Status = domain.CardStatus(status)
 	if snoozedUntil.Valid {
 		card.SnoozedUntil = &snoozedUntil.Time
 	}
+	if lastReviewedAt.Valid {
+		card.LastReviewedAt = &lastReviewedAt.Time
+	}
+	card.NextDueAt = nextDueAt
 	return card, nil
 }

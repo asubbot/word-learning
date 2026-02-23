@@ -166,7 +166,11 @@ func TestDeckCardStats(t *testing.T) {
 		t.Fatalf("CreateCard removed: %v", err)
 	}
 
-	future := time.Now().UTC().Add(2 * time.Hour)
+	now := time.Now().UTC()
+	future := now.Add(2 * time.Hour)
+	if updated, err := store.UpdateCardSchedule(ctx, activeCard.ID, now.Add(10*time.Minute), 600, 2.3, 1, now); err != nil || !updated {
+		t.Fatalf("UpdateCardSchedule active: updated=%v err=%v", updated, err)
+	}
 	if updated, err := store.SetCardStatus(ctx, snoozedCard.ID, domain.CardStatusSnoozed, &future); err != nil || !updated {
 		t.Fatalf("SetCardStatus snoozed: updated=%v err=%v", updated, err)
 	}
@@ -174,24 +178,59 @@ func TestDeckCardStats(t *testing.T) {
 		t.Fatalf("SetCardStatus removed: updated=%v err=%v", updated, err)
 	}
 
-	stats, err := store.DeckCardStats(ctx, deck.ID)
+	stats, err := store.DeckCardStats(ctx, deck.ID, now)
 	if err != nil {
 		t.Fatalf("DeckCardStats: %v", err)
 	}
-
-	if stats.Active != 1 || stats.Snoozed != 1 || stats.Total != 3 {
+	if stats.Active != 0 || stats.Postponed != 2 || stats.Total != 2 {
 		t.Fatalf("unexpected stats: %#v", stats)
 	}
 
-	if updated, err := store.SetCardStatus(ctx, activeCard.ID, domain.CardStatusRemoved, nil); err != nil || !updated {
-		t.Fatalf("SetCardStatus active->removed: updated=%v err=%v", updated, err)
+	if updated, err := store.SetCardActiveNow(ctx, activeCard.ID, now.Add(-time.Minute)); err != nil || !updated {
+		t.Fatalf("SetCardActiveNow: updated=%v err=%v", updated, err)
 	}
-
-	stats, err = store.DeckCardStats(ctx, deck.ID)
+	stats, err = store.DeckCardStats(ctx, deck.ID, now)
 	if err != nil {
 		t.Fatalf("DeckCardStats after update: %v", err)
 	}
-	if stats.Active != 0 || stats.Snoozed != 1 || stats.Total != 3 {
+	if stats.Active != 1 || stats.Postponed != 1 || stats.Total != 2 {
 		t.Fatalf("unexpected stats after update: %#v", stats)
+	}
+}
+
+func TestNextCardForDeck_UsesDueDateOrder(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	deck, err := store.CreateDeck(ctx, "Deck", "EN", "RU")
+	if err != nil {
+		t.Fatalf("CreateDeck: %v", err)
+	}
+
+	first, err := store.CreateCard(ctx, CardCreateParams{DeckID: deck.ID, Front: "first", Back: "one"})
+	if err != nil {
+		t.Fatalf("CreateCard first: %v", err)
+	}
+	second, err := store.CreateCard(ctx, CardCreateParams{DeckID: deck.ID, Front: "second", Back: "two"})
+	if err != nil {
+		t.Fatalf("CreateCard second: %v", err)
+	}
+
+	if updated, err := store.UpdateCardSchedule(ctx, first.ID, now.Add(5*time.Minute), 300, 2.5, 0, now); err != nil || !updated {
+		t.Fatalf("UpdateCardSchedule first: updated=%v err=%v", updated, err)
+	}
+	if updated, err := store.UpdateCardSchedule(ctx, second.ID, now.Add(-2*time.Minute), 300, 2.5, 0, now); err != nil || !updated {
+		t.Fatalf("UpdateCardSchedule second: updated=%v err=%v", updated, err)
+	}
+
+	next, err := store.NextCardForDeck(ctx, deck.ID, now)
+	if err != nil {
+		t.Fatalf("NextCardForDeck: %v", err)
+	}
+	if next == nil || next.ID != second.ID {
+		t.Fatalf("expected due card %d, got %#v", second.ID, next)
 	}
 }

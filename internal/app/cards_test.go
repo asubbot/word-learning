@@ -5,8 +5,8 @@ import (
 	"errors"
 	"path/filepath"
 	"testing"
+	"time"
 
-	"word-learning-cli/internal/domain"
 	"word-learning-cli/internal/storage/sqlite"
 )
 
@@ -87,7 +87,7 @@ func TestServiceDeckValidation(t *testing.T) {
 func TestServiceCardLifecycle(t *testing.T) {
 	t.Parallel()
 
-	svc, _ := newTestService(t)
+	svc, store := newTestService(t)
 	ctx := context.Background()
 	deckID := mustCreateDeck(t, svc)
 
@@ -97,14 +97,6 @@ func TestServiceCardLifecycle(t *testing.T) {
 	}
 	if card.Front != "banished" || card.Back != "изгнанный" || card.Pronunciation != "/banished/" || card.Description != "sample" {
 		t.Fatalf("unexpected trimmed values: %#v", card)
-	}
-
-	cards, err := svc.ListCards(ctx, deckID, "active")
-	if err != nil {
-		t.Fatalf("ListCards active: %v", err)
-	}
-	if len(cards) != 1 || cards[0].ID != card.ID {
-		t.Fatalf("expected active card %d, got %#v", card.ID, cards)
 	}
 
 	next, err := svc.NextCard(ctx, deckID)
@@ -124,15 +116,32 @@ func TestServiceCardLifecycle(t *testing.T) {
 		t.Fatalf("NextCard after remember: %v", err)
 	}
 	if next != nil {
-		t.Fatalf("expected no card while snoozed, got %#v", next)
+		t.Fatalf("expected no card while due date is in future, got %#v", next)
 	}
 
-	cards, err = svc.ListCards(ctx, deckID, "snoozed")
+	stored, err := store.GetCardByID(ctx, card.ID)
 	if err != nil {
-		t.Fatalf("ListCards snoozed: %v", err)
+		t.Fatalf("GetCardByID after remember: %v", err)
 	}
-	if len(cards) != 1 || cards[0].SnoozedUntil == nil {
-		t.Fatalf("expected one snoozed card with snoozed_until, got %#v", cards)
+	if stored == nil {
+		t.Fatal("expected card after remember")
+	}
+	if stored.IntervalSec < 86400 {
+		t.Fatalf("expected interval >= 1 day, got %d", stored.IntervalSec)
+	}
+	if stored.LastReviewedAt == nil {
+		t.Fatal("expected last_reviewed_at after remember")
+	}
+	if !stored.NextDueAt.After(time.Now().UTC()) {
+		t.Fatalf("expected future next_due_at, got %v", stored.NextDueAt)
+	}
+
+	_, stats, err := svc.NextCardWithStats(ctx, deckID)
+	if err != nil {
+		t.Fatalf("NextCardWithStats after remember: %v", err)
+	}
+	if stats.Active != 0 || stats.Postponed != 1 || stats.Total != 1 {
+		t.Fatalf("unexpected stats after remember: %#v", stats)
 	}
 
 	if err := svc.DontRememberCard(ctx, card.ID); err != nil {
@@ -143,26 +152,26 @@ func TestServiceCardLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NextCard after dont-remember: %v", err)
 	}
-	if next == nil || next.ID != card.ID || next.Status != domain.CardStatusActive {
-		t.Fatalf("expected active card %d, got %#v", card.ID, next)
+	if next != nil {
+		t.Fatalf("expected no card immediately after dont-remember short interval, got %#v", next)
 	}
 
-	next, stats, err := svc.NextCardWithStats(ctx, deckID)
+	stored, err = store.GetCardByID(ctx, card.ID)
 	if err != nil {
-		t.Fatalf("NextCardWithStats: %v", err)
+		t.Fatalf("GetCardByID after dont-remember: %v", err)
 	}
-	if next == nil || next.ID != card.ID {
-		t.Fatalf("expected next card %d from stats method, got %#v", card.ID, next)
+	if stored.Lapses != 1 {
+		t.Fatalf("expected lapses=1, got %d", stored.Lapses)
 	}
-	if stats.Active != 1 || stats.Snoozed != 0 || stats.Total != 1 {
-		t.Fatalf("unexpected stats before remove: %#v", stats)
+	if stored.IntervalSec != 600 {
+		t.Fatalf("expected interval_sec=600, got %d", stored.IntervalSec)
 	}
 
 	if err := svc.RemoveCard(ctx, card.ID); err != nil {
 		t.Fatalf("RemoveCard: %v", err)
 	}
 
-	cards, err = svc.ListCards(ctx, deckID, "removed")
+	cards, err := svc.ListCards(ctx, deckID, "removed")
 	if err != nil {
 		t.Fatalf("ListCards removed: %v", err)
 	}
@@ -174,7 +183,7 @@ func TestServiceCardLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NextCardWithStats after remove: %v", err)
 	}
-	if stats.Active != 0 || stats.Snoozed != 0 || stats.Total != 1 {
+	if stats.Active != 0 || stats.Postponed != 0 || stats.Total != 0 {
 		t.Fatalf("unexpected stats after remove: %#v", stats)
 	}
 
@@ -182,12 +191,12 @@ func TestServiceCardLifecycle(t *testing.T) {
 		t.Fatalf("RestoreCard: %v", err)
 	}
 
-	cards, err = svc.ListCards(ctx, deckID, "active")
+	next, err = svc.NextCard(ctx, deckID)
 	if err != nil {
-		t.Fatalf("ListCards active after restore: %v", err)
+		t.Fatalf("NextCard after restore: %v", err)
 	}
-	if len(cards) != 1 || cards[0].ID != card.ID {
-		t.Fatalf("expected active card %d after restore, got %#v", card.ID, cards)
+	if next == nil || next.ID != card.ID {
+		t.Fatalf("expected restored card %d to be due now, got %#v", card.ID, next)
 	}
 }
 
@@ -229,5 +238,30 @@ func TestServiceCardValidationAndNotFound(t *testing.T) {
 	}
 	if err := svc.DontRememberCard(ctx, 9999); !errors.Is(err, ErrCardNotFound) {
 		t.Fatalf("expected ErrCardNotFound, got %v", err)
+	}
+}
+
+func TestNextRememberIntervalSec(t *testing.T) {
+	t.Parallel()
+
+	if got := nextRememberIntervalSec(0, 2.5); got != 86400 {
+		t.Fatalf("expected 86400 for first remember, got %d", got)
+	}
+	if got := nextRememberIntervalSec(86400, 2.5); got != 216000 {
+		t.Fatalf("expected grown interval, got %d", got)
+	}
+	if got := nextRememberIntervalSec(100, 1.1); got != 86400 {
+		t.Fatalf("expected minimum one day, got %d", got)
+	}
+}
+
+func TestMaxEase(t *testing.T) {
+	t.Parallel()
+
+	if got := maxEase(0); got != 2.5 {
+		t.Fatalf("expected default ease 2.5, got %f", got)
+	}
+	if got := maxEase(2.3); got != 2.3 {
+		t.Fatalf("expected ease 2.3, got %f", got)
 	}
 }

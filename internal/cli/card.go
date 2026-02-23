@@ -149,7 +149,7 @@ func newCardGetCmd(ctx *commandContext) *cobra.Command {
 				return nil
 			}
 			printCardDetails(*card)
-			fmt.Printf("Активных %d, отложено %d, всего %d\n", stats.Active, stats.Snoozed, stats.Total)
+			fmt.Printf("Active %d, postponed %d, total %d\n", stats.Active, stats.Postponed, stats.Total)
 			return nil
 		},
 	}
@@ -164,7 +164,7 @@ func newCardRememberCmd(ctx *commandContext) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "remember",
-		Short: "Snooze card for 24 hours",
+		Short: "Increase next review interval",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			service := app.NewService(ctx.Store)
 			if err := service.RememberCard(context.Background(), cardID); err != nil {
@@ -173,7 +173,7 @@ func newCardRememberCmd(ctx *commandContext) *cobra.Command {
 				}
 				return err
 			}
-			fmt.Printf("Card snoozed for 24h: id=%d\n", cardID)
+			fmt.Printf("Card scheduled with longer interval: id=%d\n", cardID)
 			return nil
 		},
 	}
@@ -188,7 +188,7 @@ func newCardDontRememberCmd(ctx *commandContext) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "dont-remember",
-		Short: "Keep card active in rotation",
+		Short: "Schedule short retry interval",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			service := app.NewService(ctx.Store)
 			if err := service.DontRememberCard(context.Background(), cardID); err != nil {
@@ -197,7 +197,7 @@ func newCardDontRememberCmd(ctx *commandContext) *cobra.Command {
 				}
 				return err
 			}
-			fmt.Printf("Card set to active: id=%d\n", cardID)
+			fmt.Printf("Card scheduled for short retry: id=%d\n", cardID)
 			return nil
 		},
 	}
