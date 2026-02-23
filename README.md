@@ -1,60 +1,60 @@
 # word-learning-cli
 
-CLI-инструмент на Go для изучения иностранных слов через карточки.
+A Go CLI tool for learning foreign words with flashcards.
 
-## Возможности (MVP)
+## MVP Features
 
-- Управление колодами: создание и список.
-- Управление карточками: добавление, список, удаление, восстановление.
-- Режим практики в CLI:
-  - `card get` — следующая доступная карточка.
-  - `card remember` — увеличить интервал до следующего показа (due-date scheduler).
-  - `card dont-remember` — сократить интервал до короткого повтора (10 минут).
-- Локальное надежное хранение в SQLite.
+- Deck management: create and list.
+- Card management: add, list, remove, restore.
+- CLI practice mode:
+  - `card get` - fetch the next available card.
+  - `card remember` - increase interval before next review (due-date scheduler).
+  - `card dont-remember` - schedule a short retry (10 minutes).
+- Reliable local storage in SQLite.
 
-## Требования
+## Requirements
 
-- Go 1.22+ (проверено в среде проекта).
+- Go 1.22+ (validated in this project environment).
 
-## Установка зависимостей
+## Install Dependencies
 
 ```bash
 go mod tidy
 ```
 
-## Быстрый старт
+## Quick Start
 
-### 1) Создать колоду
+### 1) Create a deck
 
 ```bash
 go run ./cmd/wordcli deck create --name "English Basics" --from EN --to RU
 ```
 
-### 2) Добавить карточку
+### 2) Add a card
 
 ```bash
-go run ./cmd/wordcli card add --deck 1 --front "banished" --back "изгнанный" --pronunciation "/banished/" --description "He was banished from the kingdom."
+go run ./cmd/wordcli card add --deck 1 --front "banished" --back "exiled" --pronunciation "/banished/" --description "He was banished from the kingdom."
 ```
 
-### 3) Получить карточку
+### 3) Get a card
 
 ```bash
 go run ./cmd/wordcli card get --deck 1
 ```
 
-### 4) Отметить как помню (увеличить интервал)
+### 4) Mark as remembered (increase interval)
 
 ```bash
 go run ./cmd/wordcli card remember --id 1
 ```
 
-### 5) Отметить как не помню (быстрый повтор)
+### 5) Mark as not remembered (short retry)
 
 ```bash
 go run ./cmd/wordcli card dont-remember --id 1
 ```
 
-## Основные команды
+## Main Commands
 
 ### Deck
 
@@ -71,66 +71,66 @@ go run ./cmd/wordcli card dont-remember --id 1
 - `card remove --id`
 - `card restore --id`
 
-## Описание CLI-команд
+## CLI Command Reference
 
-### Глобальные флаги
+### Global flags
 
-- `--db <path>` — путь к SQLite-файлу БД (по умолчанию `wordcli.db` в текущей директории).
-- `-h, --help` — показать справку.
+- `--db <path>` - path to the SQLite DB file (default: `wordcli.db` in current directory).
+- `-h, --help` - show help.
 
 ### Deck
 
 - `deck create --name <name> --from <lang> --to <lang>`
-  - создает новую колоду;
-  - `--from` и `--to` принимают языковой код из 2-8 латинских букв (например `EN`, `RU`);
-  - языки источника и назначения должны отличаться.
+  - creates a new deck;
+  - `--from` and `--to` accept language codes with 2-8 latin letters (e.g. `EN`, `RU`);
+  - source and target languages must be different.
 - `deck list`
-  - выводит список существующих колод.
+  - prints all existing decks.
 
 ### Card
 
 - `card add --deck <deck_id> --front "<text>" --back "<text>" [--pronunciation "<text>"] [--description "<text>"]`
-  - добавляет карточку в указанную колоду.
-  - `--pronunciation` опционально сохраняет транскрипцию/подсказку произношения.
+  - adds a card to the selected deck;
+  - `--pronunciation` optionally stores transcription/pronunciation help.
 - `card list --deck <deck_id> [--status active|removed]`
-  - выводит карточки колоды;
-  - с `--status` фильтрует карточки по статусу.
+  - prints deck cards;
+  - with `--status`, filters cards by status.
 - `card get --deck <deck_id>`
-  - выводит следующую доступную карточку для изучения;
-  - показывает карточки по due-date (`next_due_at <= now`);
-  - `removed` не участвует в выборке;
-  - после карточки печатает сводку: `Active X, postponed Y, total Z`.
+  - prints the next available card for review;
+  - returns only due cards (`next_due_at <= now`);
+  - excludes `removed` cards;
+  - prints summary line after the card: `Active X, postponed Y, total Z`.
 - `card remember --id <card_id>`
-  - увеличивает интервал повторения и переносит карточку в будущее (`next_due_at`).
+  - increases review interval and schedules the card into the future (`next_due_at`).
 - `card dont-remember --id <card_id>`
-  - уменьшает интервал и ставит короткий повтор через 10 минут.
+  - reduces interval and schedules a short retry in 10 minutes.
 - `card remove --id <card_id>`
-  - мягко удаляет карточку из активной ротации (`status=removed`).
+  - soft-removes a card from active rotation (`status=removed`).
 - `card restore --id <card_id>`
-  - восстанавливает карточку в статус `active`.
+  - restores a card to `active` status.
 
-## Работа с БД
+## Database Usage
 
-По умолчанию используется файл `wordcli.db` в текущей директории. Можно задать путь явно:
+By default, the tool uses `wordcli.db` in the current directory. You can set a custom path:
 
 ```bash
 go run ./cmd/wordcli --db ./data/mywords.db deck list
 ```
 
-## Проверки качества
+## Quality Checks
 
 ```bash
 go test ./...
 go vet ./...
 ```
 
-## Запуск CLI
+## Run CLI
 
 ```bash
 go run ./cmd/wordcli
 ```
 
-Примеры запуска подкоманд:
+Subcommand examples:
 
 ```bash
 go run ./cmd/wordcli completion --help
@@ -138,15 +138,15 @@ go run ./cmd/wordcli deck list
 go run ./cmd/wordcli card get --deck 1
 ```
 
-## Автокомплит (Cobra completion)
+## Shell Completion (Cobra)
 
-`wordcli` поддерживает генерацию скриптов автодополнения через встроенную команду:
+`wordcli` supports generating shell completion scripts via the built-in command:
 
 ```bash
 go run ./cmd/wordcli completion --help
 ```
 
-Подключение в текущую сессию:
+Enable in current shell session:
 
 ```bash
 # bash
@@ -159,63 +159,63 @@ source <(go run ./cmd/wordcli completion zsh)
 go run ./cmd/wordcli completion fish | source
 ```
 
-После этого по `Tab` должны подсказываться команды и флаги (`card`, `deck`, `--db` и т.д.).
+After that, `Tab` completion should suggest commands and flags (`card`, `deck`, `--db`, etc.).
 
-Постоянная настройка для `zsh`:
+Persistent setup for `zsh`:
 
 ```bash
 echo 'source <(go run ./cmd/wordcli completion zsh)' >> ~/.zshrc
 source ~/.zshrc
 ```
 
-Команду выше выполняйте из корня проекта.
+Run the command above from the project root.
 
-## E2E сценарий ручной проверки
+## Manual E2E Scenario
 
-Ниже минимальный сценарий для проверки полного потока в чистой БД:
+Minimal end-to-end flow for a clean DB:
 
 ```bash
-# 1) Очистить тестовую БД (если была)
+# 1) Remove previous test DB (if any)
 rm -f ./e2e.db
 
-# 2) Создать колоду
+# 2) Create a deck
 go run ./cmd/wordcli --db ./e2e.db deck create --name "English Basics" --from EN --to RU
 
-# 3) Добавить карточку
-go run ./cmd/wordcli --db ./e2e.db card add --deck 1 --front "banished" --back "изгнанный" --pronunciation "/banished/" --description "He was banished from the kingdom."
+# 3) Add a card
+go run ./cmd/wordcli --db ./e2e.db card add --deck 1 --front "banished" --back "exiled" --pronunciation "/banished/" --description "He was banished from the kingdom."
 
-# 4) Убедиться, что карточка в active
+# 4) Verify card is active
 go run ./cmd/wordcli --db ./e2e.db card list --deck 1 --status active
 
-# 5) Получить следующую карточку
+# 5) Get next card
 go run ./cmd/wordcli --db ./e2e.db card get --deck 1
 
-# 6) Пометить как remember (карточка уходит в будущий due)
+# 6) Mark as remembered (moves to future due date)
 go run ./cmd/wordcli --db ./e2e.db card remember --id 1
 
-# 7) Проверить, что карточка временно не выдается (due еще не наступил)
+# 7) Verify card is temporarily unavailable (due date not reached)
 go run ./cmd/wordcli --db ./e2e.db card get --deck 1
 
-# 8) Отметить как не помню (ставим короткий повтор)
+# 8) Mark as not remembered (short retry)
 go run ./cmd/wordcli --db ./e2e.db card dont-remember --id 1
 
-# 9) Сразу после dont-remember карточка еще может не выдаваться (ожидаем короткую паузу ~10 минут)
+# 9) Immediately after dont-remember, card may still be unavailable (~10 minute delay)
 go run ./cmd/wordcli --db ./e2e.db card get --deck 1
 
-# 10) Удалить карточку из ротации
+# 10) Remove card from rotation
 go run ./cmd/wordcli --db ./e2e.db card remove --id 1
 
-# 11) Проверить removed-список
+# 11) Verify removed list
 go run ./cmd/wordcli --db ./e2e.db card list --deck 1 --status removed
 
-# 12) Восстановить карточку
+# 12) Restore card
 go run ./cmd/wordcli --db ./e2e.db card restore --id 1
 
-# 13) Финальная проверка active-списка
+# 13) Final active list check
 go run ./cmd/wordcli --db ./e2e.db card list --deck 1 --status active
 ```
 
-## Команды через Makefile
+## Makefile Commands
 
 ```bash
 make help
@@ -228,15 +228,15 @@ make coverage-html
 make check
 ```
 
-`make lint` использует `golangci-lint`; если он не установлен, команда подскажет ссылку на установку.
-`make coverage` печатает текстовую сводку покрытия, `make coverage-html` генерирует файл `coverage.html`.
-`make check` запускает `fmt + vet + lint + coverage`.
+`make lint` uses `golangci-lint`; if missing, the command prints an install link.
+`make coverage` prints textual coverage summary; `make coverage-html` generates `coverage.html`.
+`make check` runs `fmt + vet + lint + coverage`.
 
-## Структура проекта
+## Project Structure
 
-- `cmd/wordcli` — точка входа CLI.
-- `internal/cli` — команды Cobra и форматирование вывода.
-- `internal/app` — бизнес-правила и валидация.
-- `internal/storage/sqlite` — SQLite-хранилище и SQL-операции.
-- `internal/domain` — доменные модели.
-- `migrations` — SQL-схема для инициализации.
+- `cmd/wordcli` - CLI entrypoint.
+- `internal/cli` - Cobra commands and output formatting.
+- `internal/app` - business logic and validation.
+- `internal/storage/sqlite` - SQLite storage and queries.
+- `internal/domain` - domain models.
+- `migrations` - SQL schema/migrations.

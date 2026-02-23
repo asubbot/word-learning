@@ -1,74 +1,74 @@
-# Пошаговый план реализации Go CLI (MVP)
+# Step-by-step Go CLI Implementation Plan (MVP)
 
-## Шаг 1. Инициализация проекта и CLI-каркаса
-- Инициализировать модуль Go.
-- Подключить Cobra.
-- Добавить команды `deck` и `card`.
+## Step 1. Initialize project and CLI scaffold
+- Initialize Go module.
+- Add Cobra.
+- Add `deck` and `card` commands.
 
-Проверка:
+Validation:
 - `go mod tidy`
 - `go run ./cmd/wordcli --help`
 - `go run ./cmd/wordcli deck --help`
 - `go run ./cmd/wordcli card --help`
 
-## Шаг 2. Хранение данных и схема БД
-- Подключить SQLite.
-- Добавить инициализацию таблиц `decks` и `cards`.
-- Добавить флаг `--db`.
+## Step 2. Data storage and DB schema
+- Add SQLite.
+- Add schema initialization for `decks` and `cards` tables.
+- Add `--db` flag.
 
-Проверка:
-- При первом запуске создается файл БД.
-- Таблицы `decks` и `cards` существуют.
-- Повторный запуск не ломает схему.
+Validation:
+- DB file is created on first run.
+- `decks` and `cards` tables exist.
+- Re-run does not break schema.
 
-## Шаг 3. Реализация deck-команд
+## Step 3. Implement deck commands
 - `deck create --name --from --to`
 - `deck list`
-- Валидация обязательных флагов и языковых кодов.
+- Validate required flags and language codes.
 
-Проверка:
-- После `deck create` колода видна в `deck list`.
-- Ошибки по отсутствующим флагам понятны.
+Validation:
+- After `deck create`, deck appears in `deck list`.
+- Missing-flag errors are clear.
 
-## Шаг 4. Реализация card-команд (CRUD + статусы)
+## Step 4. Implement card commands (CRUD + statuses)
 - `card add --deck --front --back --description`
 - `card list --deck [--status]`
 - `card remove --id`
 - `card restore --id`
 
-Проверка:
-- Карточка появляется в `active`.
-- После remove карточка видна в `removed`.
-- После restore карточка снова `active`.
+Validation:
+- Card appears in `active`.
+- After remove, card is visible in `removed`.
+- After restore, card is `active` again.
 
-## Шаг 5. Логика обучения
+## Step 5. Learning logic
 - `card get --deck`
-- `card remember --id` (24 часа)
+- `card remember --id` (24 hours)
 - `card dont-remember --id`
 
-Проверка:
-- После `remember` карточка не выдается.
-- После истечения `snoozed_until` снова выдается.
-- `dont-remember` оставляет карточку в ротации.
+Validation:
+- After `remember`, card is not returned.
+- Card appears again when due.
+- `dont-remember` keeps card in rotation with a short retry interval.
 
-## Шаг 6. UX CLI и сообщения
-- Единый формат вывода для `list`.
-- Понятные ошибки.
+## Step 6. CLI UX and messages
+- Unified output format for `list`.
+- Clear errors.
 
-Проверка:
-- Стабильный и читаемый вывод.
-- Ошибки содержат причину и контекст.
+Validation:
+- Output is stable and readable.
+- Errors include reason and context.
 
-## Шаг 7. Тесты и качество
-- Unit-тесты бизнес-логики.
-- Integration-тесты storage-слоя.
+## Step 7. Tests and quality
+- Unit tests for business logic.
+- Integration tests for storage layer.
 
-Проверка:
+Validation:
 - `go test ./...`
 - `go vet ./...`
 
-## Шаг 8. Документация
-- README с quickstart и примерами команд.
+## Step 8. Documentation
+- README with quickstart and command examples.
 
-Проверка:
-- Новый пользователь запускает проект по README без доп. шагов.
+Validation:
+- A new user can run the project from README without extra steps.

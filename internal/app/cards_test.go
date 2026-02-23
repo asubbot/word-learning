@@ -91,11 +91,11 @@ func TestServiceCardLifecycle(t *testing.T) {
 	ctx := context.Background()
 	deckID := mustCreateDeck(t, svc)
 
-	card, err := svc.AddCard(ctx, deckID, " banished ", " изгнанный ", " /banished/ ", "  sample ")
+	card, err := svc.AddCard(ctx, deckID, " banished ", " exiled ", " /banished/ ", "  sample ")
 	if err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
-	if card.Front != "banished" || card.Back != "изгнанный" || card.Pronunciation != "/banished/" || card.Description != "sample" {
+	if card.Front != "banished" || card.Back != "exiled" || card.Pronunciation != "/banished/" || card.Description != "sample" {
 		t.Fatalf("unexpected trimmed values: %#v", card)
 	}
 

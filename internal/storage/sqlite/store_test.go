@@ -32,7 +32,7 @@ func TestNextCardForDeck_RespectsDueAndRemoved(t *testing.T) {
 	card, err := store.CreateCard(ctx, CardCreateParams{
 		DeckID:        deck.ID,
 		Front:         "banished",
-		Back:          "изгнанный",
+		Back:          "exiled",
 		Pronunciation: "/banished/",
 		Description:   "sample",
 	})
