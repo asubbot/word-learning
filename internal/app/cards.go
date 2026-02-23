@@ -13,6 +13,12 @@ import (
 
 var ErrCardNotFound = errors.New("card not found")
 
+type DeckStats struct {
+	Active  int64
+	Snoozed int64
+	Total   int64
+}
+
 func (s *Service) AddCard(ctx context.Context, deckID int64, front, back, pronunciation, description string) (domain.Card, error) {
 	if deckID <= 0 {
 		return domain.Card{}, fmt.Errorf("--deck must be a positive integer")
@@ -129,6 +135,22 @@ func (s *Service) NextCard(ctx context.Context, deckID int64) (*domain.Card, err
 		return nil, fmt.Errorf("--deck must be a positive integer")
 	}
 	return s.store.NextCardForDeck(ctx, deckID, time.Now().UTC())
+}
+
+func (s *Service) NextCardWithStats(ctx context.Context, deckID int64) (*domain.Card, DeckStats, error) {
+	card, err := s.NextCard(ctx, deckID)
+	if err != nil {
+		return nil, DeckStats{}, err
+	}
+	stats, err := s.store.DeckCardStats(ctx, deckID)
+	if err != nil {
+		return nil, DeckStats{}, err
+	}
+	return card, DeckStats{
+		Active:  stats.Active,
+		Snoozed: stats.Snoozed,
+		Total:   stats.Total,
+	}, nil
 }
 
 func parseCardStatus(value string) (domain.CardStatus, error) {

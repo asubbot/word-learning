@@ -140,7 +140,7 @@ func newCardGetCmd(ctx *commandContext) *cobra.Command {
 		Short: "Get next available card for a deck",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			service := app.NewService(ctx.Store)
-			card, err := service.NextCard(context.Background(), deckID)
+			card, stats, err := service.NextCardWithStats(context.Background(), deckID)
 			if err != nil {
 				return err
 			}
@@ -149,6 +149,7 @@ func newCardGetCmd(ctx *commandContext) *cobra.Command {
 				return nil
 			}
 			printCardDetails(*card)
+			fmt.Printf("Активных %d, отложено %d, всего %d\n", stats.Active, stats.Snoozed, stats.Total)
 			return nil
 		},
 	}

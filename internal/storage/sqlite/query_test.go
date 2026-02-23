@@ -141,3 +141,57 @@ func TestListCardsWithStatusFilter(t *testing.T) {
 		t.Fatalf("unexpected removed cards: %#v", removedCards)
 	}
 }
+
+func TestDeckCardStats(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	deck, err := store.CreateDeck(ctx, "Deck", "EN", "RU")
+	if err != nil {
+		t.Fatalf("CreateDeck: %v", err)
+	}
+
+	activeCard, err := store.CreateCard(ctx, CardCreateParams{DeckID: deck.ID, Front: "a", Back: "a"})
+	if err != nil {
+		t.Fatalf("CreateCard active: %v", err)
+	}
+	snoozedCard, err := store.CreateCard(ctx, CardCreateParams{DeckID: deck.ID, Front: "b", Back: "b"})
+	if err != nil {
+		t.Fatalf("CreateCard snoozed: %v", err)
+	}
+	removedCard, err := store.CreateCard(ctx, CardCreateParams{DeckID: deck.ID, Front: "c", Back: "c"})
+	if err != nil {
+		t.Fatalf("CreateCard removed: %v", err)
+	}
+
+	future := time.Now().UTC().Add(2 * time.Hour)
+	if updated, err := store.SetCardStatus(ctx, snoozedCard.ID, domain.CardStatusSnoozed, &future); err != nil || !updated {
+		t.Fatalf("SetCardStatus snoozed: updated=%v err=%v", updated, err)
+	}
+	if updated, err := store.SetCardStatus(ctx, removedCard.ID, domain.CardStatusRemoved, nil); err != nil || !updated {
+		t.Fatalf("SetCardStatus removed: updated=%v err=%v", updated, err)
+	}
+
+	stats, err := store.DeckCardStats(ctx, deck.ID)
+	if err != nil {
+		t.Fatalf("DeckCardStats: %v", err)
+	}
+
+	if stats.Active != 1 || stats.Snoozed != 1 || stats.Total != 3 {
+		t.Fatalf("unexpected stats: %#v", stats)
+	}
+
+	if updated, err := store.SetCardStatus(ctx, activeCard.ID, domain.CardStatusRemoved, nil); err != nil || !updated {
+		t.Fatalf("SetCardStatus active->removed: updated=%v err=%v", updated, err)
+	}
+
+	stats, err = store.DeckCardStats(ctx, deck.ID)
+	if err != nil {
+		t.Fatalf("DeckCardStats after update: %v", err)
+	}
+	if stats.Active != 0 || stats.Snoozed != 1 || stats.Total != 3 {
+		t.Fatalf("unexpected stats after update: %#v", stats)
+	}
+}

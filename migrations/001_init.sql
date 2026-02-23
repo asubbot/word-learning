@@ -23,4 +23,5 @@ CREATE TABLE IF NOT EXISTS cards (
 
 CREATE INDEX IF NOT EXISTS idx_cards_deck_id ON cards(deck_id);
 CREATE INDEX IF NOT EXISTS idx_cards_status ON cards(status);
+CREATE INDEX IF NOT EXISTS idx_cards_deck_status ON cards(deck_id, status);
 CREATE INDEX IF NOT EXISTS idx_cards_snoozed_until ON cards(snoozed_until);

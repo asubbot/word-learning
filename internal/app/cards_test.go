@@ -147,6 +147,17 @@ func TestServiceCardLifecycle(t *testing.T) {
 		t.Fatalf("expected active card %d, got %#v", card.ID, next)
 	}
 
+	next, stats, err := svc.NextCardWithStats(ctx, deckID)
+	if err != nil {
+		t.Fatalf("NextCardWithStats: %v", err)
+	}
+	if next == nil || next.ID != card.ID {
+		t.Fatalf("expected next card %d from stats method, got %#v", card.ID, next)
+	}
+	if stats.Active != 1 || stats.Snoozed != 0 || stats.Total != 1 {
+		t.Fatalf("unexpected stats before remove: %#v", stats)
+	}
+
 	if err := svc.RemoveCard(ctx, card.ID); err != nil {
 		t.Fatalf("RemoveCard: %v", err)
 	}
@@ -157,6 +168,14 @@ func TestServiceCardLifecycle(t *testing.T) {
 	}
 	if len(cards) != 1 || cards[0].ID != card.ID {
 		t.Fatalf("expected removed card %d, got %#v", card.ID, cards)
+	}
+
+	_, stats, err = svc.NextCardWithStats(ctx, deckID)
+	if err != nil {
+		t.Fatalf("NextCardWithStats after remove: %v", err)
+	}
+	if stats.Active != 0 || stats.Snoozed != 0 || stats.Total != 1 {
+		t.Fatalf("unexpected stats after remove: %#v", stats)
 	}
 
 	if err := svc.RestoreCard(ctx, card.ID); err != nil {

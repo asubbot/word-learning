@@ -18,6 +18,12 @@ type CardCreateParams struct {
 	Description   string
 }
 
+type DeckCardStats struct {
+	Active  int64
+	Snoozed int64
+	Total   int64
+}
+
 func (s *Store) DeckExists(ctx context.Context, deckID int64) (bool, error) {
 	var exists int
 	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM decks WHERE id = ?)`, deckID).Scan(&exists)
@@ -134,6 +140,23 @@ func (s *Store) NextCardForDeck(ctx context.Context, deckID int64, now time.Time
 	}
 
 	return &card, nil
+}
+
+func (s *Store) DeckCardStats(ctx context.Context, deckID int64) (DeckCardStats, error) {
+	var stats DeckCardStats
+	if err := s.db.QueryRowContext(
+		ctx,
+		`SELECT
+			COALESCE(SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN status = 'snoozed' THEN 1 ELSE 0 END), 0),
+			COUNT(*)
+		 FROM cards
+		 WHERE deck_id = ?`,
+		deckID,
+	).Scan(&stats.Active, &stats.Snoozed, &stats.Total); err != nil {
+		return DeckCardStats{}, fmt.Errorf("get deck card stats: %w", err)
+	}
+	return stats, nil
 }
 
 func scanCard(scanner interface{ Scan(dest ...any) error }) (domain.Card, error) {

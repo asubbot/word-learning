@@ -99,6 +99,7 @@ go run ./cmd/wordcli card dont-remember --id 1
   - выводит следующую доступную карточку для изучения;
   - показывает только `active` и `snoozed` с истекшим `snoozed_until`;
   - `removed` не участвует в выборке.
+  - после карточки печатает сводку: `Активных X, отложено Y, всего Z`.
 - `card remember --id <card_id>`
   - ставит статус `snoozed` на 24 часа.
 - `card dont-remember --id <card_id>`
