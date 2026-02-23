@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS cards (
   back TEXT NOT NULL,
   pronunciation TEXT NOT NULL DEFAULT '',
   description TEXT NOT NULL DEFAULT '',
-  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'snoozed', 'removed')),
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'removed')),
   snoozed_until DATETIME NULL,
   next_due_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   interval_sec INTEGER NOT NULL DEFAULT 0,

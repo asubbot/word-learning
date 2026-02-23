@@ -189,15 +189,11 @@ func (s *Store) NextCardForDeck(ctx context.Context, deckID int64, now time.Time
 		`SELECT id, deck_id, front, back, pronunciation, description, status, snoozed_until, next_due_at, interval_sec, ease, lapses, last_reviewed_at
 		 FROM cards
 		 WHERE deck_id = ?
-		   AND status != 'removed'
-		   AND (
-		     (status = 'active' AND next_due_at <= ?)
-		     OR (status = 'snoozed' AND (snoozed_until IS NULL OR snoozed_until <= ?))
-		   )
-		 ORDER BY COALESCE(next_due_at, snoozed_until, created_at) ASC, id ASC
+		   AND status = 'active'
+		   AND next_due_at <= ?
+		 ORDER BY next_due_at ASC, id ASC
 		 LIMIT 1`,
 		deckID,
-		now.UTC(),
 		now.UTC(),
 	)
 
@@ -218,7 +214,7 @@ func (s *Store) DeckCardStats(ctx context.Context, deckID int64, now time.Time) 
 		ctx,
 		`SELECT
 			COALESCE(SUM(CASE WHEN status = 'active' AND next_due_at <= ? THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN (status = 'active' AND next_due_at > ?) OR status = 'snoozed' THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN status = 'active' AND next_due_at > ? THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN status != 'removed' THEN 1 ELSE 0 END), 0)
 		 FROM cards
 		 WHERE deck_id = ?`,

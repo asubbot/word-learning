@@ -64,7 +64,7 @@ go run ./cmd/wordcli card dont-remember --id 1
 ### Card
 
 - `card add --deck --front --back [--pronunciation] [--description]`
-- `card list --deck [--status active|snoozed|removed]` (статус `snoozed` сохранен для совместимости со старыми данными)
+- `card list --deck [--status active|removed]`
 - `card get --deck`
 - `card remember --id`
 - `card dont-remember --id`
@@ -92,15 +92,14 @@ go run ./cmd/wordcli card dont-remember --id 1
 - `card add --deck <deck_id> --front "<text>" --back "<text>" [--pronunciation "<text>"] [--description "<text>"]`
   - добавляет карточку в указанную колоду.
   - `--pronunciation` опционально сохраняет транскрипцию/подсказку произношения.
-- `card list --deck <deck_id> [--status active|snoozed|removed]`
+- `card list --deck <deck_id> [--status active|removed]`
   - выводит карточки колоды;
   - с `--status` фильтрует карточки по статусу.
 - `card get --deck <deck_id>`
   - выводит следующую доступную карточку для изучения;
   - показывает карточки по due-date (`next_due_at <= now`);
-  - legacy-поддержка: `snoozed` с истекшим `snoozed_until` тоже участвуют в выдаче;
-  - `removed` не участвует в выборке.
-  - после карточки печатает сводку: `Активных X, отложено Y, всего Z`.
+  - `removed` не участвует в выборке;
+  - после карточки печатает сводку: `Active X, postponed Y, total Z`.
 - `card remember --id <card_id>`
   - увеличивает интервал повторения и переносит карточку в будущее (`next_due_at`).
 - `card dont-remember --id <card_id>`

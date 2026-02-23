@@ -199,12 +199,10 @@ func parseCardStatus(value string) (domain.CardStatus, error) {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "active":
 		return domain.CardStatusActive, nil
-	case "snoozed":
-		return domain.CardStatusSnoozed, nil
 	case "removed":
 		return domain.CardStatusRemoved, nil
 	default:
-		return "", fmt.Errorf("--status must be one of: active, snoozed, removed")
+		return "", fmt.Errorf("--status must be one of: active, removed")
 	}
 }
 

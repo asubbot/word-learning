@@ -6,7 +6,6 @@ type CardStatus string
 
 const (
 	CardStatusActive  CardStatus = "active"
-	CardStatusSnoozed CardStatus = "snoozed"
 	CardStatusRemoved CardStatus = "removed"
 )
 

@@ -36,7 +36,7 @@ func TestNormalizeLanguageCode(t *testing.T) {
 }
 
 func TestParseCardStatus(t *testing.T) {
-	valid := []string{"active", "snoozed", "removed", " ACTIVE "}
+	valid := []string{"active", "removed", " ACTIVE "}
 	for _, value := range valid {
 		if _, err := parseCardStatus(value); err != nil {
 			t.Fatalf("value %q should be valid: %v", value, err)

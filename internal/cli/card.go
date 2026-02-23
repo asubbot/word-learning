@@ -78,7 +78,7 @@ func newCardListCmd(ctx *commandContext) *cobra.Command {
 	}
 
 	cmd.Flags().Int64Var(&deckID, "deck", 0, "Deck ID")
-	cmd.Flags().StringVar(&status, "status", "", "Optional filter: active|snoozed|removed")
+	cmd.Flags().StringVar(&status, "status", "", "Optional filter: active|removed")
 	_ = cmd.MarkFlagRequired("deck")
 
 	return cmd
@@ -113,7 +113,7 @@ func newCardRestoreCmd(ctx *commandContext) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "restore",
-		Short: "Restore a removed/snoozed card to active status",
+		Short: "Restore a removed card to active status",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			service := app.NewService(ctx.Store)
 			if err := service.RestoreCard(context.Background(), cardID); err != nil {

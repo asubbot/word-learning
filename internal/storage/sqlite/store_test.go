@@ -9,7 +9,7 @@ import (
 	"word-learning-cli/internal/domain"
 )
 
-func TestNextCardForDeck_RespectsStatuses(t *testing.T) {
+func TestNextCardForDeck_RespectsDueAndRemoved(t *testing.T) {
 	t.Parallel()
 
 	dbPath := filepath.Join(t.TempDir(), "test.db")
@@ -49,31 +49,31 @@ func TestNextCardForDeck_RespectsStatuses(t *testing.T) {
 	}
 
 	future := time.Now().UTC().Add(24 * time.Hour)
-	updated, err := store.SetCardStatus(ctx, card.ID, domain.CardStatusSnoozed, &future)
+	updated, err := store.UpdateCardSchedule(ctx, card.ID, future, 86400, 2.5, 0, time.Now().UTC())
 	if err != nil || !updated {
-		t.Fatalf("set snoozed status: updated=%v err=%v", updated, err)
+		t.Fatalf("set postponed schedule: updated=%v err=%v", updated, err)
 	}
 
 	next, err = store.NextCardForDeck(ctx, deck.ID, time.Now().UTC())
 	if err != nil {
-		t.Fatalf("next card snoozed: %v", err)
+		t.Fatalf("next card postponed: %v", err)
 	}
 	if next != nil {
-		t.Fatalf("expected nil while card is snoozed, got %#v", next)
+		t.Fatalf("expected nil while card is postponed, got %#v", next)
 	}
 
 	past := time.Now().UTC().Add(-time.Hour)
-	updated, err = store.SetCardStatus(ctx, card.ID, domain.CardStatusSnoozed, &past)
+	updated, err = store.SetCardActiveNow(ctx, card.ID, past)
 	if err != nil || !updated {
-		t.Fatalf("set past snoozed_until: updated=%v err=%v", updated, err)
+		t.Fatalf("set card due in the past: updated=%v err=%v", updated, err)
 	}
 
 	next, err = store.NextCardForDeck(ctx, deck.ID, time.Now().UTC())
 	if err != nil {
-		t.Fatalf("next card expired snooze: %v", err)
+		t.Fatalf("next card after due time: %v", err)
 	}
 	if next == nil || next.ID != card.ID {
-		t.Fatalf("expected card %d after snooze expiry, got %#v", card.ID, next)
+		t.Fatalf("expected card %d after due time, got %#v", card.ID, next)
 	}
 
 	updated, err = store.SetCardStatus(ctx, card.ID, domain.CardStatusRemoved, nil)
