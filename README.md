@@ -147,6 +147,7 @@ The project also includes a Telegram bot binary that reuses the same app/storage
 - `TELEGRAM_BOT_TOKEN` - Telegram bot token from BotFather.
 - `WORDCLI_DB_PATH` - SQLite DB path (optional, default: `./wordcli.db`).
 - `TELEGRAM_POLLING_TIMEOUT` - long-poll timeout in seconds (optional, default: `30`).
+- `BOT_ALLOWED_USER_IDS` - optional comma-separated allowlist of Telegram user IDs.
 
 ### Start bot
 

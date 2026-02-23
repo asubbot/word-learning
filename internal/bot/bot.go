@@ -28,6 +28,7 @@ type handler struct {
 	service *app.Service
 	log     *slog.Logger
 	dedupe  *callbackDeduper
+	allow   map[int64]struct{}
 }
 
 type callbackDeduper struct {
@@ -76,6 +77,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		service: app.NewService(store),
 		log:     logger,
 		dedupe:  newCallbackDeduper(),
+		allow:   buildAllowlist(cfg.AllowedUserIDs),
 	}
 
 	updateCfg := tgbotapi.NewUpdate(0)
@@ -98,6 +100,13 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 
 func (h *handler) handleUpdate(ctx context.Context, update tgbotapi.Update) error {
 	if update.Message != nil {
+		if update.Message.From == nil {
+			return nil
+		}
+		if !h.isAllowed(update.Message.From.ID) {
+			h.log.Warn("deny message from non-allowlisted user", "user_id", update.Message.From.ID)
+			return h.sendText(update.Message.Chat.ID, "Access denied.")
+		}
 		if update.Message.IsCommand() {
 			return h.handleCommand(ctx, update.Message)
 		}
@@ -105,6 +114,14 @@ func (h *handler) handleUpdate(ctx context.Context, update tgbotapi.Update) erro
 	}
 
 	if update.CallbackQuery != nil {
+		if update.CallbackQuery.From == nil {
+			return nil
+		}
+		if !h.isAllowed(update.CallbackQuery.From.ID) {
+			h.log.Warn("deny callback from non-allowlisted user", "user_id", update.CallbackQuery.From.ID)
+			_ = h.answerCallback(update.CallbackQuery.ID, "Access denied.")
+			return nil
+		}
 		return h.handleCallback(ctx, update.CallbackQuery)
 	}
 
@@ -232,6 +249,25 @@ func (h *handler) sendText(chatID int64, text string) error {
 	msg := tgbotapi.NewMessage(chatID, text)
 	_, err := h.sendWithRetry(msg)
 	return err
+}
+
+func (h *handler) isAllowed(userID int64) bool {
+	if len(h.allow) == 0 {
+		return true
+	}
+	_, ok := h.allow[userID]
+	return ok
+}
+
+func buildAllowlist(ids []int64) map[int64]struct{} {
+	allow := make(map[int64]struct{}, len(ids))
+	for _, id := range ids {
+		if id <= 0 {
+			continue
+		}
+		allow[id] = struct{}{}
+	}
+	return allow
 }
 
 func (h *handler) sendWithRetry(msg tgbotapi.Chattable) (tgbotapi.Message, error) {

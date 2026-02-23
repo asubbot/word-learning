@@ -146,3 +146,46 @@ func TestBotCallbackOwnershipProtection(t *testing.T) {
 		t.Fatalf("expected card to remain active, got %#v", stored)
 	}
 }
+
+func TestBotAllowlistDeniesNonAllowedMessageUser(t *testing.T) {
+	t.Parallel()
+
+	h, api := newTestHandler(t)
+	h.allow = buildAllowlist([]int64{42})
+	ctx := context.Background()
+
+	msg := commandMessage(100, 777, "/health", "health")
+	if err := h.handleUpdate(ctx, tgbotapi.Update{Message: msg}); err != nil {
+		t.Fatalf("handle update: %v", err)
+	}
+	if len(api.sentTexts) == 0 {
+		t.Fatal("expected access denied message")
+	}
+	if got := api.sentTexts[len(api.sentTexts)-1]; got != "Access denied." {
+		t.Fatalf("expected access denied text, got %q", got)
+	}
+}
+
+func TestBotAllowlistDeniesNonAllowedCallbackUser(t *testing.T) {
+	t.Parallel()
+
+	h, api := newTestHandler(t)
+	h.allow = buildAllowlist([]int64{42})
+	ctx := context.Background()
+
+	cb := &tgbotapi.CallbackQuery{
+		ID:      "cb-deny",
+		Data:    "act=remember;card=1;deck=1",
+		From:    &tgbotapi.User{ID: 777},
+		Message: &tgbotapi.Message{Chat: &tgbotapi.Chat{ID: 10}},
+	}
+	if err := h.handleUpdate(ctx, tgbotapi.Update{CallbackQuery: cb}); err != nil {
+		t.Fatalf("handle callback update: %v", err)
+	}
+	if len(api.callbackTexts) == 0 {
+		t.Fatal("expected callback denial answer")
+	}
+	if got := api.callbackTexts[len(api.callbackTexts)-1]; got != "Access denied." {
+		t.Fatalf("expected access denied callback, got %q", got)
+	}
+}

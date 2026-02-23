@@ -12,6 +12,7 @@ type Config struct {
 	TelegramBotToken string
 	DBPath           string
 	PollingTimeout   int
+	AllowedUserIDs   []int64
 }
 
 func LoadConfigFromEnv() (Config, error) {
@@ -38,9 +39,31 @@ func LoadConfigFromEnv() (Config, error) {
 		pollingTimeout = parsed
 	}
 
+	allowedUserIDs := make([]int64, 0)
+	if raw := strings.TrimSpace(os.Getenv("BOT_ALLOWED_USER_IDS")); raw != "" {
+		parts := strings.Split(raw, ",")
+		seen := make(map[int64]struct{}, len(parts))
+		for _, p := range parts {
+			value := strings.TrimSpace(p)
+			if value == "" {
+				continue
+			}
+			id, err := strconv.ParseInt(value, 10, 64)
+			if err != nil || id <= 0 {
+				return Config{}, fmt.Errorf("BOT_ALLOWED_USER_IDS must contain positive int64 ids separated by commas")
+			}
+			if _, ok := seen[id]; ok {
+				continue
+			}
+			seen[id] = struct{}{}
+			allowedUserIDs = append(allowedUserIDs, id)
+		}
+	}
+
 	return Config{
 		TelegramBotToken: token,
 		DBPath:           dbPath,
 		PollingTimeout:   pollingTimeout,
+		AllowedUserIDs:   allowedUserIDs,
 	}, nil
 }
