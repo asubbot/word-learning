@@ -33,14 +33,18 @@ func (s *Store) CreateDeck(ctx context.Context, name, languageFrom, languageTo s
 	}, nil
 }
 
-func (s *Store) ListDecks(ctx context.Context) ([]domain.Deck, error) {
+func (s *Store) ListDecks(ctx context.Context) (decks []domain.Deck, err error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id, name, language_from, language_to FROM decks ORDER BY id ASC`)
 	if err != nil {
 		return nil, fmt.Errorf("list decks: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close deck rows: %w", closeErr)
+		}
+	}()
 
-	decks := make([]domain.Deck, 0)
+	decks = make([]domain.Deck, 0)
 	for rows.Next() {
 		var d domain.Deck
 		if err := rows.Scan(&d.ID, &d.Name, &d.LanguageFrom, &d.LanguageTo); err != nil {

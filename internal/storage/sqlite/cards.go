@@ -54,7 +54,7 @@ func (s *Store) CreateCard(ctx context.Context, params CardCreateParams) (domain
 	}, nil
 }
 
-func (s *Store) ListCards(ctx context.Context, deckID int64, status *domain.CardStatus) ([]domain.Card, error) {
+func (s *Store) ListCards(ctx context.Context, deckID int64, status *domain.CardStatus) (cards []domain.Card, err error) {
 	query := `SELECT id, deck_id, front, back, description, status, snoozed_until FROM cards WHERE deck_id = ?`
 	args := []any{deckID}
 	if status != nil {
@@ -67,9 +67,13 @@ func (s *Store) ListCards(ctx context.Context, deckID int64, status *domain.Card
 	if err != nil {
 		return nil, fmt.Errorf("list cards: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close card rows: %w", closeErr)
+		}
+	}()
 
-	cards := make([]domain.Card, 0)
+	cards = make([]domain.Card, 0)
 	for rows.Next() {
 		card, err := scanCard(rows)
 		if err != nil {

@@ -86,6 +86,24 @@ go test ./...
 go vet ./...
 ```
 
+## Команды через Makefile
+
+```bash
+make help
+make fmt
+make test
+make vet
+make lint
+make coverage
+make coverage-html
+make check
+make run
+```
+
+`make lint` использует `golangci-lint`; если он не установлен, команда подскажет ссылку на установку.
+`make coverage` печатает текстовую сводку покрытия, `make coverage-html` генерирует файл `coverage.html`.
+`make check` запускает `fmt + vet + lint + coverage`.
+
 ## Структура проекта
 
 - `cmd/wordcli` — точка входа CLI.
