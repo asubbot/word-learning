@@ -168,6 +168,51 @@ source ~/.zshrc
 
 Команду выше выполняйте из корня проекта.
 
+## E2E сценарий ручной проверки
+
+Ниже минимальный сценарий для проверки полного потока в чистой БД:
+
+```bash
+# 1) Очистить тестовую БД (если была)
+rm -f ./e2e.db
+
+# 2) Создать колоду
+go run ./cmd/wordcli --db ./e2e.db deck create --name "English Basics" --from EN --to RU
+
+# 3) Добавить карточку
+go run ./cmd/wordcli --db ./e2e.db card add --deck 1 --front "banished" --back "изгнанный" --description "He was banished from the kingdom."
+
+# 4) Убедиться, что карточка в active
+go run ./cmd/wordcli --db ./e2e.db card list --deck 1 --status active
+
+# 5) Получить следующую карточку
+go run ./cmd/wordcli --db ./e2e.db card get --deck 1
+
+# 6) Пометить как remember (snooze на 24 часа)
+go run ./cmd/wordcli --db ./e2e.db card remember --id 1
+
+# 7) Проверить, что карточка временно не выдается
+go run ./cmd/wordcli --db ./e2e.db card get --deck 1
+
+# 8) Вернуть карточку в active
+go run ./cmd/wordcli --db ./e2e.db card dont-remember --id 1
+
+# 9) Проверить, что снова выдается
+go run ./cmd/wordcli --db ./e2e.db card get --deck 1
+
+# 10) Удалить карточку из ротации
+go run ./cmd/wordcli --db ./e2e.db card remove --id 1
+
+# 11) Проверить removed-список
+go run ./cmd/wordcli --db ./e2e.db card list --deck 1 --status removed
+
+# 12) Восстановить карточку
+go run ./cmd/wordcli --db ./e2e.db card restore --id 1
+
+# 13) Финальная проверка active-списка
+go run ./cmd/wordcli --db ./e2e.db card list --deck 1 --status active
+```
+
 ## Команды через Makefile
 
 ```bash
