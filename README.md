@@ -71,6 +71,42 @@ go run ./cmd/wordcli card dont-remember --id 1
 - `card remove --id`
 - `card restore --id`
 
+## Описание CLI-команд
+
+### Глобальные флаги
+
+- `--db <path>` — путь к SQLite-файлу БД (по умолчанию `wordcli.db` в текущей директории).
+- `-h, --help` — показать справку.
+
+### Deck
+
+- `deck create --name <name> --from <lang> --to <lang>`
+  - создает новую колоду;
+  - `--from` и `--to` принимают языковой код из 2-8 латинских букв (например `EN`, `RU`);
+  - языки источника и назначения должны отличаться.
+- `deck list`
+  - выводит список существующих колод.
+
+### Card
+
+- `card add --deck <deck_id> --front "<text>" --back "<text>" [--description "<text>"]`
+  - добавляет карточку в указанную колоду.
+- `card list --deck <deck_id> [--status active|snoozed|removed]`
+  - выводит карточки колоды;
+  - с `--status` фильтрует карточки по статусу.
+- `card get --deck <deck_id>`
+  - выводит следующую доступную карточку для изучения;
+  - показывает только `active` и `snoozed` с истекшим `snoozed_until`;
+  - `removed` не участвует в выборке.
+- `card remember --id <card_id>`
+  - ставит статус `snoozed` на 24 часа.
+- `card dont-remember --id <card_id>`
+  - устанавливает статус `active` (карточка сразу снова в ротации).
+- `card remove --id <card_id>`
+  - мягко удаляет карточку из активной ротации (`status=removed`).
+- `card restore --id <card_id>`
+  - восстанавливает карточку в статус `active`.
+
 ## Работа с БД
 
 По умолчанию используется файл `wordcli.db` в текущей директории. Можно задать путь явно:
@@ -86,6 +122,52 @@ go test ./...
 go vet ./...
 ```
 
+## Запуск CLI
+
+```bash
+go run ./cmd/wordcli
+```
+
+Примеры запуска подкоманд:
+
+```bash
+go run ./cmd/wordcli completion --help
+go run ./cmd/wordcli deck list
+go run ./cmd/wordcli card get --deck 1
+```
+
+## Автокомплит (Cobra completion)
+
+`wordcli` поддерживает генерацию скриптов автодополнения через встроенную команду:
+
+```bash
+go run ./cmd/wordcli completion --help
+```
+
+Подключение в текущую сессию:
+
+```bash
+# bash
+source <(go run ./cmd/wordcli completion bash)
+
+# zsh
+source <(go run ./cmd/wordcli completion zsh)
+
+# fish
+go run ./cmd/wordcli completion fish | source
+```
+
+После этого по `Tab` должны подсказываться команды и флаги (`card`, `deck`, `--db` и т.д.).
+
+Постоянная настройка для `zsh`:
+
+```bash
+echo 'source <(go run ./cmd/wordcli completion zsh)' >> ~/.zshrc
+source ~/.zshrc
+```
+
+Команду выше выполняйте из корня проекта.
+
 ## Команды через Makefile
 
 ```bash
@@ -97,7 +179,6 @@ make lint
 make coverage
 make coverage-html
 make check
-make run
 ```
 
 `make lint` использует `golangci-lint`; если он не установлен, команда подскажет ссылку на установку.

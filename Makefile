@@ -1,7 +1,4 @@
-APP_NAME := wordcli
-CMD_PATH := ./cmd/wordcli
-
-.PHONY: help fmt test vet lint coverage coverage-html check run
+.PHONY: help fmt test vet lint coverage coverage-html check
 
 help:
 	@echo "Available commands:"
@@ -12,7 +9,6 @@ help:
 	@echo "  make coverage     - Print coverage summary"
 	@echo "  make coverage-html - Build HTML coverage report"
 	@echo "  make check  - Run fmt + vet + lint + coverage"
-	@echo "  make run    - Run CLI app"
 
 fmt:
 	go fmt ./...
@@ -41,6 +37,3 @@ coverage-html:
 	@echo "Coverage report generated: coverage.html"
 
 check: fmt vet lint coverage
-
-run:
-	go run $(CMD_PATH)
