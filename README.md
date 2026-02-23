@@ -138,6 +138,48 @@ go run ./cmd/wordcli deck list
 go run ./cmd/wordcli card get --deck 1
 ```
 
+## Run Telegram Bot
+
+The project also includes a Telegram bot binary that reuses the same app/storage layers as CLI.
+
+### Required environment variables
+
+- `TELEGRAM_BOT_TOKEN` - Telegram bot token from BotFather.
+- `WORDCLI_DB_PATH` - SQLite DB path (optional, default: `./wordcli.db`).
+- `TELEGRAM_POLLING_TIMEOUT` - long-poll timeout in seconds (optional, default: `30`).
+
+### Start bot
+
+```bash
+export TELEGRAM_BOT_TOKEN="<your_token>"
+export WORDCLI_DB_PATH="./bot.db"
+go run ./cmd/wordbot
+```
+
+### Bot commands
+
+- `/start` - show help.
+- `/help` - show help.
+- `/health` - health check.
+- `/deck_create <name> <from> <to>` - create deck.
+- `/deck_list` - list your decks.
+- `/card_add <deck_id> | <front> | <back> | <pronunciation> | <description>` - add card.
+- `/next <deck_id>` - show next due card with inline actions.
+
+### Inline actions in `/next`
+
+- `Don't remember` - schedule short retry.
+- `Remember` - increase interval.
+- `Remove` - remove card from active rotation.
+
+Back side is rendered in Telegram spoiler format.
+
+### Deployment notes
+
+- Run `wordbot` as a long-lived process (systemd, Docker, or any process manager).
+- Keep `TELEGRAM_BOT_TOKEN` in environment or secrets manager.
+- CLI and bot can share one DB file, but production setups should prefer a stable volume path and regular backups.
+
 ## Shell Completion (Cobra)
 
 `wordcli` supports generating shell completion scripts via the built-in command:
@@ -232,10 +274,95 @@ make check
 `make coverage` prints textual coverage summary; `make coverage-html` generates `coverage.html`.
 `make check` runs `fmt + vet + lint + coverage`.
 
+## Bot E2E Smoke Scenario
+
+Use one Telegram user and execute:
+
+1. `/deck_create basics EN RU`
+2. `/deck_list`
+3. `/card_add 1 | banished | изгнанный | /banished/ | He was banished from the kingdom.`
+4. `/next 1`
+5. Press `Remember`
+6. `/next 1` (expect no card due right away)
+7. Press `Don't remember` on the next due card
+8. Press `Remove`
+9. `/next 1` (expect no active card until restore/new card)
+
+## Telegram Verification Checklist
+
+Use this checklist to validate end-to-end bot behavior in a live Telegram chat.
+
+### 1) Start bot process
+
+```bash
+go run ./cmd/wordbot
+```
+
+Keep the process running during verification.
+
+### 2) Basic command health
+
+- `/start` -> bot returns help text.
+- `/health` -> bot returns `OK`.
+- `/deck_list` -> initially empty or existing user decks only.
+
+### 3) Deck and card creation
+
+1. `/deck_create basics EN RU`
+2. `/deck_list` (verify deck appears)
+3. `/card_add 1 | banished | изгнанный | /banished/ | He was banished from the kingdom.`
+
+Expected: `Card created: id=<id> deck=1`.
+
+### 4) Next card rendering
+
+Run:
+
+```text
+/next 1
+```
+
+Expected:
+- card details are rendered,
+- back side is hidden using Telegram spoiler,
+- stats line is present: `Active X, postponed Y, total Z`,
+- inline actions are visible: `Don't remember`, `Remember`, `Remove`.
+
+### 5) Inline action behavior
+
+1. Press `Remember`
+   - run `/next 1`, expect no due card immediately.
+2. On the next due card, press `Don't remember`
+   - card is rescheduled to short retry interval.
+3. Press `Remove`
+   - `/next 1` should not return removed card.
+
+### 6) Negative validation checks
+
+- `/next abc` -> validation error for non-numeric deck id.
+- `/deck_create basics EN EN` -> validation error for same language pair.
+- `/card_add 1 | only_front` -> usage/argument format error.
+
+### 7) Cross-user isolation
+
+From another Telegram account:
+
+- `/deck_list` should not show first user decks.
+- `/next 1` should not access first user cards.
+- callback actions from another user's card message must be rejected.
+
+### 8) Restart persistence
+
+1. Stop bot process.
+2. Start bot again (`go run ./cmd/wordbot`).
+3. Verify `/deck_list` and `/next 1` still use persisted data from SQLite.
+
 ## Project Structure
 
 - `cmd/wordcli` - CLI entrypoint.
+- `cmd/wordbot` - Telegram bot entrypoint.
 - `internal/cli` - Cobra commands and output formatting.
+- `internal/bot` - Telegram routing, commands, and callback handling.
 - `internal/app` - business logic and validation.
 - `internal/storage/sqlite` - SQLite storage and queries.
 - `internal/domain` - domain models.

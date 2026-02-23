@@ -1,5 +1,6 @@
 CREATE TABLE IF NOT EXISTS decks (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  telegram_user_id INTEGER NOT NULL DEFAULT 0,
   name TEXT NOT NULL,
   language_from TEXT NOT NULL,
   language_to TEXT NOT NULL,
@@ -29,3 +30,4 @@ CREATE INDEX IF NOT EXISTS idx_cards_deck_id ON cards(deck_id);
 CREATE INDEX IF NOT EXISTS idx_cards_status ON cards(status);
 CREATE INDEX IF NOT EXISTS idx_cards_deck_status ON cards(deck_id, status);
 CREATE INDEX IF NOT EXISTS idx_cards_deck_due ON cards(deck_id, status, next_due_at);
+CREATE INDEX IF NOT EXISTS idx_decks_owner_id ON decks(telegram_user_id, id);

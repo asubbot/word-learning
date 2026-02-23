@@ -265,3 +265,34 @@ func TestMaxEase(t *testing.T) {
 		t.Fatalf("expected ease 2.3, got %f", got)
 	}
 }
+
+func TestServiceOwnerIsolation(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+
+	deck, err := svc.CreateDeckForUser(ctx, 101, "Shared", "EN", "RU")
+	if err != nil {
+		t.Fatalf("CreateDeckForUser: %v", err)
+	}
+	card, err := svc.AddCardForUser(ctx, 101, deck.ID, "banished", "exiled", "", "")
+	if err != nil {
+		t.Fatalf("AddCardForUser owner 101: %v", err)
+	}
+
+	if _, err := svc.AddCardForUser(ctx, 202, deck.ID, "intrude", "fail", "", ""); err == nil {
+		t.Fatal("expected add card error for foreign owner")
+	}
+
+	if _, _, err := svc.NextCardWithStatsForUser(ctx, 202, deck.ID); err == nil {
+		t.Fatal("expected next card error for foreign owner")
+	}
+
+	if err := svc.RememberCardForUser(ctx, 202, card.ID); !errors.Is(err, ErrCardNotFound) {
+		t.Fatalf("expected ErrCardNotFound for foreign remember, got %v", err)
+	}
+	if err := svc.RemoveCardForUser(ctx, 202, card.ID); !errors.Is(err, ErrCardNotFound) {
+		t.Fatalf("expected ErrCardNotFound for foreign remove, got %v", err)
+	}
+}

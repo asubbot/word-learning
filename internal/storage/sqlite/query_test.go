@@ -207,3 +207,42 @@ func TestNextCardForDeck_UsesDueDateOrder(t *testing.T) {
 		t.Fatalf("expected due card %d, got %#v", second.ID, next)
 	}
 }
+
+func TestDeckOwnerIsolation(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	ownerOneDeck, err := store.CreateDeckForOwner(ctx, 101, "OwnerOne", "EN", "RU")
+	if err != nil {
+		t.Fatalf("CreateDeckForOwner owner1: %v", err)
+	}
+	if _, err := store.CreateDeckForOwner(ctx, 202, "OwnerTwo", "EN", "DE"); err != nil {
+		t.Fatalf("CreateDeckForOwner owner2: %v", err)
+	}
+
+	ownerOneDecks, err := store.ListDecksForOwner(ctx, 101)
+	if err != nil {
+		t.Fatalf("ListDecksForOwner owner1: %v", err)
+	}
+	if len(ownerOneDecks) != 1 || ownerOneDecks[0].ID != ownerOneDeck.ID {
+		t.Fatalf("unexpected owner1 decks: %#v", ownerOneDecks)
+	}
+
+	ownerTwoDecks, err := store.ListDecksForOwner(ctx, 202)
+	if err != nil {
+		t.Fatalf("ListDecksForOwner owner2: %v", err)
+	}
+	if len(ownerTwoDecks) != 1 {
+		t.Fatalf("expected one owner2 deck, got %#v", ownerTwoDecks)
+	}
+
+	exists, err := store.DeckExistsForOwner(ctx, ownerOneDeck.ID, 202)
+	if err != nil {
+		t.Fatalf("DeckExistsForOwner mismatch owner: %v", err)
+	}
+	if exists {
+		t.Fatal("did not expect owner2 to see owner1 deck")
+	}
+}

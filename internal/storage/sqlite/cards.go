@@ -96,6 +96,42 @@ func (s *Store) ListCards(ctx context.Context, deckID int64, status *domain.Card
 	return cards, nil
 }
 
+func (s *Store) ListCardsForOwner(ctx context.Context, deckID int64, telegramUserID int64, status *domain.CardStatus) (cards []domain.Card, err error) {
+	query := `SELECT c.id, c.deck_id, c.front, c.back, c.pronunciation, c.description, c.status, c.next_due_at, c.interval_sec, c.ease, c.lapses, c.last_reviewed_at
+		FROM cards c
+		INNER JOIN decks d ON d.id = c.deck_id
+		WHERE c.deck_id = ? AND d.telegram_user_id = ?`
+	args := []any{deckID, telegramUserID}
+	if status != nil {
+		query += ` AND c.status = ?`
+		args = append(args, string(*status))
+	}
+	query += ` ORDER BY c.id ASC`
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list owner cards: %w", err)
+	}
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close owner card rows: %w", closeErr)
+		}
+	}()
+
+	cards = make([]domain.Card, 0)
+	for rows.Next() {
+		card, scanErr := scanCard(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		cards = append(cards, card)
+	}
+	if rowsErr := rows.Err(); rowsErr != nil {
+		return nil, fmt.Errorf("iterate owner cards: %w", rowsErr)
+	}
+	return cards, nil
+}
+
 func (s *Store) GetCardByID(ctx context.Context, cardID int64) (*domain.Card, error) {
 	row := s.db.QueryRowContext(
 		ctx,
@@ -103,6 +139,26 @@ func (s *Store) GetCardByID(ctx context.Context, cardID int64) (*domain.Card, er
 		 FROM cards
 		 WHERE id = ?`,
 		cardID,
+	)
+	card, err := scanCard(row)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &card, nil
+}
+
+func (s *Store) GetCardByIDForOwner(ctx context.Context, cardID int64, telegramUserID int64) (*domain.Card, error) {
+	row := s.db.QueryRowContext(
+		ctx,
+		`SELECT c.id, c.deck_id, c.front, c.back, c.pronunciation, c.description, c.status, c.next_due_at, c.interval_sec, c.ease, c.lapses, c.last_reviewed_at
+		 FROM cards c
+		 INNER JOIN decks d ON d.id = c.deck_id
+		 WHERE c.id = ? AND d.telegram_user_id = ?`,
+		cardID,
+		telegramUserID,
 	)
 	card, err := scanCard(row)
 	if err != nil {
@@ -206,6 +262,32 @@ func (s *Store) NextCardForDeck(ctx context.Context, deckID int64, now time.Time
 	return &card, nil
 }
 
+func (s *Store) NextCardForDeckForOwner(ctx context.Context, deckID int64, telegramUserID int64, now time.Time) (*domain.Card, error) {
+	row := s.db.QueryRowContext(
+		ctx,
+		`SELECT c.id, c.deck_id, c.front, c.back, c.pronunciation, c.description, c.status, c.next_due_at, c.interval_sec, c.ease, c.lapses, c.last_reviewed_at
+		 FROM cards c
+		 INNER JOIN decks d ON d.id = c.deck_id
+		 WHERE c.deck_id = ?
+		   AND d.telegram_user_id = ?
+		   AND c.status = 'active'
+		   AND c.next_due_at <= ?
+		 ORDER BY c.next_due_at ASC, c.id ASC
+		 LIMIT 1`,
+		deckID,
+		telegramUserID,
+		now.UTC(),
+	)
+	card, err := scanCard(row)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &card, nil
+}
+
 func (s *Store) DeckCardStats(ctx context.Context, deckID int64, now time.Time) (DeckCardStats, error) {
 	var stats DeckCardStats
 	if err := s.db.QueryRowContext(
@@ -221,6 +303,27 @@ func (s *Store) DeckCardStats(ctx context.Context, deckID int64, now time.Time) 
 		deckID,
 	).Scan(&stats.Active, &stats.Postponed, &stats.Total); err != nil {
 		return DeckCardStats{}, fmt.Errorf("get deck card stats: %w", err)
+	}
+	return stats, nil
+}
+
+func (s *Store) DeckCardStatsForOwner(ctx context.Context, deckID int64, telegramUserID int64, now time.Time) (DeckCardStats, error) {
+	var stats DeckCardStats
+	if err := s.db.QueryRowContext(
+		ctx,
+		`SELECT
+			COALESCE(SUM(CASE WHEN c.status = 'active' AND c.next_due_at <= ? THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN c.status = 'active' AND c.next_due_at > ? THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN c.status != 'removed' THEN 1 ELSE 0 END), 0)
+		 FROM cards c
+		 INNER JOIN decks d ON d.id = c.deck_id
+		 WHERE c.deck_id = ? AND d.telegram_user_id = ?`,
+		now.UTC(),
+		now.UTC(),
+		deckID,
+		telegramUserID,
+	).Scan(&stats.Active, &stats.Postponed, &stats.Total); err != nil {
+		return DeckCardStats{}, fmt.Errorf("get owner deck card stats: %w", err)
 	}
 	return stats, nil
 }

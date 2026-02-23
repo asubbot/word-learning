@@ -10,12 +10,13 @@ const (
 )
 
 type Deck struct {
-	ID           int64
-	Name         string
-	LanguageFrom string
-	LanguageTo   string
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	TelegramUserID int64
+	ID             int64
+	Name           string
+	LanguageFrom   string
+	LanguageTo     string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
 }
 
 type Card struct {

@@ -12,6 +12,7 @@ import (
 const schemaSQL = `
 CREATE TABLE IF NOT EXISTS decks (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  telegram_user_id INTEGER NOT NULL DEFAULT 0,
   name TEXT NOT NULL,
   language_from TEXT NOT NULL,
   language_to TEXT NOT NULL,
@@ -40,6 +41,7 @@ CREATE TABLE IF NOT EXISTS cards (
 CREATE INDEX IF NOT EXISTS idx_cards_deck_id ON cards(deck_id);
 CREATE INDEX IF NOT EXISTS idx_cards_status ON cards(status);
 CREATE INDEX IF NOT EXISTS idx_cards_deck_status ON cards(deck_id, status);
+CREATE INDEX IF NOT EXISTS idx_decks_owner_id ON decks(telegram_user_id, id);
 `
 
 type Store struct {
@@ -75,6 +77,9 @@ func (s *Store) InitSchema(ctx context.Context) error {
 	if err := s.addCardColumnIfMissing(ctx, "pronunciation", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
+	if err := s.addDeckColumnIfMissing(ctx, "telegram_user_id", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
 	if err := s.addCardColumnIfMissing(ctx, "next_due_at", "DATETIME"); err != nil {
 		return err
 	}
@@ -106,7 +111,22 @@ func (s *Store) InitSchema(ctx context.Context) error {
 	); err != nil {
 		return fmt.Errorf("create index idx_cards_deck_due: %w", err)
 	}
+	if _, err := s.db.ExecContext(
+		ctx,
+		`CREATE INDEX IF NOT EXISTS idx_decks_owner_id ON decks(telegram_user_id, id)`,
+	); err != nil {
+		return fmt.Errorf("create index idx_decks_owner_id: %w", err)
+	}
 
+	return nil
+}
+
+func (s *Store) addDeckColumnIfMissing(ctx context.Context, name, definition string) error {
+	if _, err := s.db.ExecContext(ctx, fmt.Sprintf("ALTER TABLE decks ADD COLUMN %s %s", name, definition)); err != nil {
+		if !isDuplicateColumnError(err) {
+			return fmt.Errorf("migrate decks.%s: %w", name, err)
+		}
+	}
 	return nil
 }
 

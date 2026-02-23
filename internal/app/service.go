@@ -21,6 +21,10 @@ func NewService(store *sqlite.Store) *Service {
 }
 
 func (s *Service) CreateDeck(ctx context.Context, name, languageFrom, languageTo string) (domain.Deck, error) {
+	return s.CreateDeckForUser(ctx, 0, name, languageFrom, languageTo)
+}
+
+func (s *Service) CreateDeckForUser(ctx context.Context, telegramUserID int64, name, languageFrom, languageTo string) (domain.Deck, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return domain.Deck{}, fmt.Errorf("deck name must not be empty")
@@ -39,11 +43,15 @@ func (s *Service) CreateDeck(ctx context.Context, name, languageFrom, languageTo
 		return domain.Deck{}, fmt.Errorf("language pair must be different")
 	}
 
-	return s.store.CreateDeck(ctx, name, normalizedFrom, normalizedTo)
+	return s.store.CreateDeckForOwner(ctx, telegramUserID, name, normalizedFrom, normalizedTo)
 }
 
 func (s *Service) ListDecks(ctx context.Context) ([]domain.Deck, error) {
-	return s.store.ListDecks(ctx)
+	return s.ListDecksForUser(ctx, 0)
+}
+
+func (s *Service) ListDecksForUser(ctx context.Context, telegramUserID int64) ([]domain.Deck, error) {
+	return s.store.ListDecksForOwner(ctx, telegramUserID)
 }
 
 func normalizeLanguageCode(value string) (string, error) {

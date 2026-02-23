@@ -21,6 +21,10 @@ type DeckStats struct {
 }
 
 func (s *Service) AddCard(ctx context.Context, deckID int64, front, back, pronunciation, description string) (domain.Card, error) {
+	return s.AddCardForUser(ctx, 0, deckID, front, back, pronunciation, description)
+}
+
+func (s *Service) AddCardForUser(ctx context.Context, telegramUserID, deckID int64, front, back, pronunciation, description string) (domain.Card, error) {
 	if deckID <= 0 {
 		return domain.Card{}, fmt.Errorf("--deck must be a positive integer")
 	}
@@ -36,7 +40,7 @@ func (s *Service) AddCard(ctx context.Context, deckID int64, front, back, pronun
 		return domain.Card{}, fmt.Errorf("back must not be empty")
 	}
 
-	exists, err := s.store.DeckExists(ctx, deckID)
+	exists, err := s.store.DeckExistsForOwner(ctx, deckID, telegramUserID)
 	if err != nil {
 		return domain.Card{}, err
 	}
@@ -54,6 +58,10 @@ func (s *Service) AddCard(ctx context.Context, deckID int64, front, back, pronun
 }
 
 func (s *Service) ListCards(ctx context.Context, deckID int64, status string) ([]domain.Card, error) {
+	return s.ListCardsForUser(ctx, 0, deckID, status)
+}
+
+func (s *Service) ListCardsForUser(ctx context.Context, telegramUserID, deckID int64, status string) ([]domain.Card, error) {
 	if deckID <= 0 {
 		return nil, fmt.Errorf("--deck must be a positive integer")
 	}
@@ -67,12 +75,20 @@ func (s *Service) ListCards(ctx context.Context, deckID int64, status string) ([
 		statusPtr = &parsed
 	}
 
-	return s.store.ListCards(ctx, deckID, statusPtr)
+	return s.store.ListCardsForOwner(ctx, deckID, telegramUserID, statusPtr)
 }
 
 func (s *Service) RemoveCard(ctx context.Context, cardID int64) error {
+	return s.RemoveCardForUser(ctx, 0, cardID)
+}
+
+func (s *Service) RemoveCardForUser(ctx context.Context, telegramUserID, cardID int64) error {
 	if cardID <= 0 {
 		return fmt.Errorf("--id must be a positive integer")
+	}
+
+	if _, err := s.mustCardForUser(ctx, telegramUserID, cardID); err != nil {
+		return err
 	}
 
 	updated, err := s.store.SetCardStatus(ctx, cardID, domain.CardStatusRemoved)
@@ -86,8 +102,16 @@ func (s *Service) RemoveCard(ctx context.Context, cardID int64) error {
 }
 
 func (s *Service) RestoreCard(ctx context.Context, cardID int64) error {
+	return s.RestoreCardForUser(ctx, 0, cardID)
+}
+
+func (s *Service) RestoreCardForUser(ctx context.Context, telegramUserID, cardID int64) error {
 	if cardID <= 0 {
 		return fmt.Errorf("--id must be a positive integer")
+	}
+
+	if _, err := s.mustCardForUser(ctx, telegramUserID, cardID); err != nil {
+		return err
 	}
 
 	updated, err := s.store.SetCardActiveNow(ctx, cardID, time.Now().UTC())
@@ -101,16 +125,17 @@ func (s *Service) RestoreCard(ctx context.Context, cardID int64) error {
 }
 
 func (s *Service) RememberCard(ctx context.Context, cardID int64) error {
+	return s.RememberCardForUser(ctx, 0, cardID)
+}
+
+func (s *Service) RememberCardForUser(ctx context.Context, telegramUserID, cardID int64) error {
 	if cardID <= 0 {
 		return fmt.Errorf("--id must be a positive integer")
 	}
 
-	card, err := s.store.GetCardByID(ctx, cardID)
+	card, err := s.mustCardForUser(ctx, telegramUserID, cardID)
 	if err != nil {
 		return err
-	}
-	if card == nil {
-		return ErrCardNotFound
 	}
 
 	now := time.Now().UTC()
@@ -136,16 +161,17 @@ func (s *Service) RememberCard(ctx context.Context, cardID int64) error {
 }
 
 func (s *Service) DontRememberCard(ctx context.Context, cardID int64) error {
+	return s.DontRememberCardForUser(ctx, 0, cardID)
+}
+
+func (s *Service) DontRememberCardForUser(ctx context.Context, telegramUserID, cardID int64) error {
 	if cardID <= 0 {
 		return fmt.Errorf("--id must be a positive integer")
 	}
 
-	card, err := s.store.GetCardByID(ctx, cardID)
+	card, err := s.mustCardForUser(ctx, telegramUserID, cardID)
 	if err != nil {
 		return err
-	}
-	if card == nil {
-		return ErrCardNotFound
 	}
 
 	now := time.Now().UTC()
@@ -172,19 +198,34 @@ func (s *Service) DontRememberCard(ctx context.Context, cardID int64) error {
 }
 
 func (s *Service) NextCard(ctx context.Context, deckID int64) (*domain.Card, error) {
+	return s.NextCardForUser(ctx, 0, deckID)
+}
+
+func (s *Service) NextCardForUser(ctx context.Context, telegramUserID, deckID int64) (*domain.Card, error) {
 	if deckID <= 0 {
 		return nil, fmt.Errorf("--deck must be a positive integer")
 	}
-	return s.store.NextCardForDeck(ctx, deckID, time.Now().UTC())
+	exists, err := s.store.DeckExistsForOwner(ctx, deckID, telegramUserID)
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		return nil, fmt.Errorf("deck %d does not exist", deckID)
+	}
+	return s.store.NextCardForDeckForOwner(ctx, deckID, telegramUserID, time.Now().UTC())
 }
 
 func (s *Service) NextCardWithStats(ctx context.Context, deckID int64) (*domain.Card, DeckStats, error) {
-	card, err := s.NextCard(ctx, deckID)
+	return s.NextCardWithStatsForUser(ctx, 0, deckID)
+}
+
+func (s *Service) NextCardWithStatsForUser(ctx context.Context, telegramUserID, deckID int64) (*domain.Card, DeckStats, error) {
+	card, err := s.NextCardForUser(ctx, telegramUserID, deckID)
 	if err != nil {
 		return nil, DeckStats{}, err
 	}
 	now := time.Now().UTC()
-	stats, err := s.store.DeckCardStats(ctx, deckID, now)
+	stats, err := s.store.DeckCardStatsForOwner(ctx, deckID, telegramUserID, now)
 	if err != nil {
 		return nil, DeckStats{}, err
 	}
@@ -193,6 +234,24 @@ func (s *Service) NextCardWithStats(ctx context.Context, deckID int64) (*domain.
 		Postponed: stats.Postponed,
 		Total:     stats.Total,
 	}, nil
+}
+
+func (s *Service) GetCardByIDForUser(ctx context.Context, telegramUserID, cardID int64) (*domain.Card, error) {
+	if cardID <= 0 {
+		return nil, fmt.Errorf("--id must be a positive integer")
+	}
+	return s.mustCardForUser(ctx, telegramUserID, cardID)
+}
+
+func (s *Service) mustCardForUser(ctx context.Context, telegramUserID, cardID int64) (*domain.Card, error) {
+	card, err := s.store.GetCardByIDForOwner(ctx, cardID, telegramUserID)
+	if err != nil {
+		return nil, err
+	}
+	if card == nil {
+		return nil, ErrCardNotFound
+	}
+	return card, nil
 }
 
 func parseCardStatus(value string) (domain.CardStatus, error) {
