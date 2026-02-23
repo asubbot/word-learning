@@ -228,7 +228,6 @@ func (h *handler) sendNextCard(ctx context.Context, chatID int64, userID int64, 
 	return err
 }
 
-
 func (h *handler) sendText(chatID int64, text string) error {
 	msg := tgbotapi.NewMessage(chatID, text)
 	_, err := h.sendWithRetry(msg)
