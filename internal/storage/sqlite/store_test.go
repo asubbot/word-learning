@@ -76,7 +76,7 @@ func TestNextCardForDeck_RespectsDueAndRemoved(t *testing.T) {
 		t.Fatalf("expected card %d after due time, got %#v", card.ID, next)
 	}
 
-	updated, err = store.SetCardStatus(ctx, card.ID, domain.CardStatusRemoved, nil)
+	updated, err = store.SetCardStatus(ctx, card.ID, domain.CardStatusRemoved)
 	if err != nil || !updated {
 		t.Fatalf("set removed status: updated=%v err=%v", updated, err)
 	}

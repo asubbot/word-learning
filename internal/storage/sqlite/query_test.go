@@ -93,7 +93,7 @@ func TestListCardsWithStatusFilter(t *testing.T) {
 	if updated, err := store.UpdateCardSchedule(ctx, postponedCard.ID, future, 600, 2.3, 1, time.Now().UTC()); err != nil || !updated {
 		t.Fatalf("UpdateCardSchedule postponed: updated=%v err=%v", updated, err)
 	}
-	if updated, err := store.SetCardStatus(ctx, removedCard.ID, domain.CardStatusRemoved, nil); err != nil || !updated {
+	if updated, err := store.SetCardStatus(ctx, removedCard.ID, domain.CardStatusRemoved); err != nil || !updated {
 		t.Fatalf("SetCardStatus removed: updated=%v err=%v", updated, err)
 	}
 
@@ -158,7 +158,7 @@ func TestDeckCardStats(t *testing.T) {
 	if updated, err := store.UpdateCardSchedule(ctx, postponedCard.ID, now.Add(10*time.Minute), 600, 2.3, 1, now); err != nil || !updated {
 		t.Fatalf("UpdateCardSchedule postponed: updated=%v err=%v", updated, err)
 	}
-	if updated, err := store.SetCardStatus(ctx, removedCard.ID, domain.CardStatusRemoved, nil); err != nil || !updated {
+	if updated, err := store.SetCardStatus(ctx, removedCard.ID, domain.CardStatusRemoved); err != nil || !updated {
 		t.Fatalf("SetCardStatus removed: updated=%v err=%v", updated, err)
 	}
 
@@ -205,76 +205,5 @@ func TestNextCardForDeck_UsesDueDateOrder(t *testing.T) {
 	}
 	if next == nil || next.ID != second.ID {
 		t.Fatalf("expected due card %d, got %#v", second.ID, next)
-	}
-}
-
-func TestInitSchema_MigratesLegacySnoozedToActiveDue(t *testing.T) {
-	t.Parallel()
-
-	dbPath := filepath.Join(t.TempDir(), "legacy.db")
-	store, err := Open(dbPath)
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
-
-	ctx := context.Background()
-
-	if _, err := store.DB().ExecContext(ctx, `
-CREATE TABLE decks (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  name TEXT NOT NULL,
-  language_from TEXT NOT NULL,
-  language_to TEXT NOT NULL,
-  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-);`); err != nil {
-		t.Fatalf("create legacy decks: %v", err)
-	}
-	if _, err := store.DB().ExecContext(ctx, `
-CREATE TABLE cards (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  deck_id INTEGER NOT NULL,
-  front TEXT NOT NULL,
-  back TEXT NOT NULL,
-  description TEXT NOT NULL DEFAULT '',
-  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'snoozed', 'removed')),
-  snoozed_until DATETIME NULL,
-  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-);`); err != nil {
-		t.Fatalf("create legacy cards: %v", err)
-	}
-
-	if _, err := store.DB().ExecContext(ctx, `INSERT INTO decks (id, name, language_from, language_to) VALUES (1, 'Legacy', 'EN', 'RU')`); err != nil {
-		t.Fatalf("insert deck: %v", err)
-	}
-	future := time.Now().UTC().Add(2 * time.Hour)
-	if _, err := store.DB().ExecContext(ctx, `
-INSERT INTO cards (deck_id, front, back, status, snoozed_until)
-VALUES (1, 'legacy', 'наследие', 'snoozed', ?)
-`, future); err != nil {
-		t.Fatalf("insert legacy card: %v", err)
-	}
-
-	if err := store.InitSchema(ctx); err != nil {
-		t.Fatalf("InitSchema: %v", err)
-	}
-
-	card, err := store.GetCardByID(ctx, 1)
-	if err != nil {
-		t.Fatalf("GetCardByID: %v", err)
-	}
-	if card == nil {
-		t.Fatal("expected migrated card")
-	}
-	if card.Status != domain.CardStatusActive {
-		t.Fatalf("expected status active, got %s", card.Status)
-	}
-	if card.NextDueAt.Before(future.Add(-2 * time.Second)) {
-		t.Fatalf("expected next_due_at to preserve snoozed_until, got %v (< %v)", card.NextDueAt, future)
-	}
-	if card.SnoozedUntil != nil {
-		t.Fatalf("expected snoozed_until to be cleared, got %v", card.SnoozedUntil)
 	}
 }

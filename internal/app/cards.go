@@ -75,7 +75,7 @@ func (s *Service) RemoveCard(ctx context.Context, cardID int64) error {
 		return fmt.Errorf("--id must be a positive integer")
 	}
 
-	updated, err := s.store.SetCardStatus(ctx, cardID, domain.CardStatusRemoved, nil)
+	updated, err := s.store.SetCardStatus(ctx, cardID, domain.CardStatusRemoved)
 	if err != nil {
 		return err
 	}

@@ -63,7 +63,7 @@ func (s *Store) CreateCard(ctx context.Context, params CardCreateParams) (domain
 }
 
 func (s *Store) ListCards(ctx context.Context, deckID int64, status *domain.CardStatus) (cards []domain.Card, err error) {
-	query := `SELECT id, deck_id, front, back, pronunciation, description, status, snoozed_until, next_due_at, interval_sec, ease, lapses, last_reviewed_at FROM cards WHERE deck_id = ?`
+	query := `SELECT id, deck_id, front, back, pronunciation, description, status, next_due_at, interval_sec, ease, lapses, last_reviewed_at FROM cards WHERE deck_id = ?`
 	args := []any{deckID}
 	if status != nil {
 		query += ` AND status = ?`
@@ -99,7 +99,7 @@ func (s *Store) ListCards(ctx context.Context, deckID int64, status *domain.Card
 func (s *Store) GetCardByID(ctx context.Context, cardID int64) (*domain.Card, error) {
 	row := s.db.QueryRowContext(
 		ctx,
-		`SELECT id, deck_id, front, back, pronunciation, description, status, snoozed_until, next_due_at, interval_sec, ease, lapses, last_reviewed_at
+		`SELECT id, deck_id, front, back, pronunciation, description, status, next_due_at, interval_sec, ease, lapses, last_reviewed_at
 		 FROM cards
 		 WHERE id = ?`,
 		cardID,
@@ -114,12 +114,11 @@ func (s *Store) GetCardByID(ctx context.Context, cardID int64) (*domain.Card, er
 	return &card, nil
 }
 
-func (s *Store) SetCardStatus(ctx context.Context, cardID int64, status domain.CardStatus, snoozedUntil *time.Time) (bool, error) {
+func (s *Store) SetCardStatus(ctx context.Context, cardID int64, status domain.CardStatus) (bool, error) {
 	result, err := s.db.ExecContext(
 		ctx,
-		`UPDATE cards SET status = ?, snoozed_until = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		`UPDATE cards SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
 		string(status),
-		snoozedUntil,
 		cardID,
 	)
 	if err != nil {
@@ -138,7 +137,7 @@ func (s *Store) SetCardActiveNow(ctx context.Context, cardID int64, now time.Tim
 	result, err := s.db.ExecContext(
 		ctx,
 		`UPDATE cards
-		 SET status = 'active', snoozed_until = NULL, next_due_at = ?, updated_at = CURRENT_TIMESTAMP
+		 SET status = 'active', next_due_at = ?, updated_at = CURRENT_TIMESTAMP
 		 WHERE id = ?`,
 		now.UTC(),
 		cardID,
@@ -158,7 +157,6 @@ func (s *Store) UpdateCardSchedule(ctx context.Context, cardID int64, nextDueAt 
 		ctx,
 		`UPDATE cards
 		 SET status = 'active',
-		     snoozed_until = NULL,
 		     next_due_at = ?,
 		     interval_sec = ?,
 		     ease = ?,
@@ -186,7 +184,7 @@ func (s *Store) UpdateCardSchedule(ctx context.Context, cardID int64, nextDueAt 
 func (s *Store) NextCardForDeck(ctx context.Context, deckID int64, now time.Time) (*domain.Card, error) {
 	row := s.db.QueryRowContext(
 		ctx,
-		`SELECT id, deck_id, front, back, pronunciation, description, status, snoozed_until, next_due_at, interval_sec, ease, lapses, last_reviewed_at
+		`SELECT id, deck_id, front, back, pronunciation, description, status, next_due_at, interval_sec, ease, lapses, last_reviewed_at
 		 FROM cards
 		 WHERE deck_id = ?
 		   AND status = 'active'
@@ -230,7 +228,6 @@ func (s *Store) DeckCardStats(ctx context.Context, deckID int64, now time.Time) 
 func scanCard(scanner interface{ Scan(dest ...any) error }) (domain.Card, error) {
 	var card domain.Card
 	var status string
-	var snoozedUntil sql.NullTime
 	var nextDueAt time.Time
 	var lastReviewedAt sql.NullTime
 
@@ -242,7 +239,6 @@ func scanCard(scanner interface{ Scan(dest ...any) error }) (domain.Card, error)
 		&card.Pronunciation,
 		&card.Description,
 		&status,
-		&snoozedUntil,
 		&nextDueAt,
 		&card.IntervalSec,
 		&card.Ease,
@@ -252,9 +248,6 @@ func scanCard(scanner interface{ Scan(dest ...any) error }) (domain.Card, error)
 		return domain.Card{}, fmt.Errorf("scan card row: %w", err)
 	}
 	card.Status = domain.CardStatus(status)
-	if snoozedUntil.Valid {
-		card.SnoozedUntil = &snoozedUntil.Time
-	}
 	if lastReviewedAt.Valid {
 		card.LastReviewedAt = &lastReviewedAt.Time
 	}

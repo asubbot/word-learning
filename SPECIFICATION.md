@@ -27,7 +27,6 @@
 - `language_from`
 - `language_to`
 - `status` (`active`, `removed`)
-- `snoozed_until` (legacy nullable поле, не используется планировщиком)
 - `next_due_at` (timestamp следующего показа по due-date)
 - `interval_sec` (текущий интервал повторения)
 - `ease` (коэффициент роста интервала)
@@ -58,7 +57,6 @@
 - `pronunciation`
 - `description`
 - `status` (`active`, `removed`)
-- `snoozed_until` (legacy nullable)
 - `next_due_at`
 - `interval_sec`
 - `ease`

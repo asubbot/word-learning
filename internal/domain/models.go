@@ -26,7 +26,6 @@ type Card struct {
 	Pronunciation  string
 	Description    string
 	Status         CardStatus
-	SnoozedUntil   *time.Time
 	NextDueAt      time.Time
 	IntervalSec    int64
 	Ease           float64
