@@ -103,7 +103,8 @@ func TestAddCardsBatchAIForUser_AllSuccess(t *testing.T) {
 			return ai.GeneratedCard{
 				Back:          "translated-" + req.Front,
 				Pronunciation: "/p/",
-				Description:   "d",
+				Example:       "d",
+				Conjugation:   "",
 			}, nil
 		},
 	}
@@ -135,7 +136,7 @@ func TestAddCardsBatchAIForUser_DuplicateSkip(t *testing.T) {
 	svc, _ := newTestService(t)
 	ctx := context.Background()
 	deckID := mustCreateDeck(t, svc)
-	if _, err := svc.AddCard(ctx, deckID, "duplicate", "one", "", ""); err != nil {
+	if _, err := svc.AddCard(ctx, deckID, "duplicate", "one", "", "", ""); err != nil {
 		t.Fatalf("seed duplicate: %v", err)
 	}
 	generator := fakeGenerator{
@@ -255,7 +256,8 @@ func TestAddCardsBatchAIToDeck_BotDeck(t *testing.T) {
 			return ai.GeneratedCard{
 				Back:          "translated-" + req.Front,
 				Pronunciation: "/p/",
-				Description:   "d",
+				Example:       "d",
+				Conjugation:   "",
 			}, nil
 		},
 	}

@@ -286,11 +286,11 @@ func (h *handler) handleDeckListCommand(ctx context.Context, msg *tgbotapi.Messa
 }
 
 func (h *handler) handleCardAddCommand(ctx context.Context, msg *tgbotapi.Message, userID int64) error {
-	deckID, front, back, pronunciation, description, err := parseCardAddArgs(msg.CommandArguments())
+	deckID, front, back, pronunciation, example, conjugation, err := parseCardAddArgs(msg.CommandArguments())
 	if err != nil {
 		return h.sendText(msg.Chat.ID, err.Error())
 	}
-	card, err := h.service.AddCardForUser(ctx, userID, deckID, front, back, pronunciation, description)
+	card, err := h.service.AddCardForUser(ctx, userID, deckID, front, back, pronunciation, example, conjugation)
 	if err != nil {
 		return h.sendText(msg.Chat.ID, fmt.Sprintf("Failed to add card: %v", err))
 	}
@@ -441,7 +441,7 @@ func helpMessage() string {
 /whoami - show your Telegram user ID
 /deck_create <from> <to> <name...> - create deck
 /deck_list - list your decks
-/card_add <deck_id> | <front> | <back> | <pronunciation> | <description> - add card
+/card_add <deck_id> | <front> | <back> | <pronunciation> | <example> | <conjugation> - add card
 /card_add_batch_ai <deck_id> then newline-separated fronts - add cards via AI
 /next <deck_id> - show next due card with action buttons`) // raw user-visible text
 }
@@ -469,29 +469,33 @@ func parseDeckIDArg(args string) (int64, error) {
 	return id, nil
 }
 
-func parseCardAddArgs(args string) (int64, string, string, string, string, error) {
+func parseCardAddArgs(args string) (int64, string, string, string, string, string, error) {
 	segments := strings.Split(args, "|")
 	for i := range segments {
 		segments[i] = strings.TrimSpace(segments[i])
 	}
 	if len(segments) < 3 {
-		return 0, "", "", "", "", fmt.Errorf("usage: /card_add <deck_id> | <front> | <back> | <pronunciation> | <description>")
+		return 0, "", "", "", "", "", fmt.Errorf("usage: /card_add <deck_id> | <front> | <back> | <pronunciation> | <example> | <conjugation>")
 	}
 	deckID, err := strconv.ParseInt(segments[0], 10, 64)
 	if err != nil || deckID <= 0 {
-		return 0, "", "", "", "", fmt.Errorf("deck_id must be a positive integer")
+		return 0, "", "", "", "", "", fmt.Errorf("deck_id must be a positive integer")
 	}
 	front := segments[1]
 	back := segments[2]
 	pronunciation := ""
-	description := ""
+	example := ""
+	conjugation := ""
 	if len(segments) >= 4 {
 		pronunciation = segments[3]
 	}
 	if len(segments) >= 5 {
-		description = segments[4]
+		example = segments[4]
 	}
-	return deckID, front, back, pronunciation, description, nil
+	if len(segments) >= 6 {
+		conjugation = segments[5]
+	}
+	return deckID, front, back, pronunciation, example, conjugation, nil
 }
 
 func parseCardAddBatchAIArgs(args string) (int64, []string, error) {
@@ -549,20 +553,24 @@ func renderCardMessage(card domain.Card, stats app.DeckStats) string {
 	front := html.EscapeString(card.Front)
 	back := html.EscapeString(card.Back)
 	pron := html.EscapeString(card.Pronunciation)
-	desc := html.EscapeString(card.Description)
+	example := html.EscapeString(card.Example)
+	conjugation := html.EscapeString(card.Conjugation)
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "<b>%s</b>\n", front)
 
-	hiddenLines := make([]string, 0, 3)
+	hiddenLines := make([]string, 0, 4)
 	if back != "" {
 		hiddenLines = append(hiddenLines, back)
 	}
 	if pron != "" {
 		hiddenLines = append(hiddenLines, pron)
 	}
-	if desc != "" {
-		hiddenLines = append(hiddenLines, desc)
+	if conjugation != "" {
+		hiddenLines = append(hiddenLines, conjugation)
+	}
+	if example != "" {
+		hiddenLines = append(hiddenLines, example)
 	}
 	if len(hiddenLines) > 0 {
 		fmt.Fprintf(&b, "<tg-spoiler>%s</tg-spoiler>\n", strings.Join(hiddenLines, "\n"))

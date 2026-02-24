@@ -34,7 +34,7 @@ go run ./cmd/wordcli deck create EN RU "English Basics"
 ### 2) Add a card
 
 ```bash
-go run ./cmd/wordcli card add --deck 1 --front "banished" --back "изгнанный" --pronunciation "/banished/" --description "He was banished from the kingdom."
+go run ./cmd/wordcli card add --deck 1 --front "banished" --back "изгнанный" --pronunciation "/banished/" --example "He was banished from the kingdom."
 ```
 
 ### 3) Get a card
@@ -64,7 +64,7 @@ go run ./cmd/wordcli card dont-remember --id 1
 
 ### Card
 
-- `card add --deck --front --back [--pronunciation] [--description]`
+- `card add --deck --front --back [--pronunciation] [--example]`
 - `card add-batch-ai --deck --from-file|--stdin [--dry-run]`
 - `card list --deck [--status active|removed]`
 - `card get --deck`
@@ -90,11 +90,11 @@ go run ./cmd/wordcli card dont-remember --id 1
 
 ### Card
 
-- `card add --deck <deck_id> --front "<text>" --back "<text>" [--pronunciation "<text>"] [--description "<text>"]`
+- `card add --deck <deck_id> --front "<text>" --back "<text>" [--pronunciation "<text>"] [--example "<text>"]`
   - adds a card to the selected deck (any deck ID from `deck list`, including bot-created decks);
   - `--pronunciation` optionally stores transcription/pronunciation help (e.g. IPA).
 - `card add-batch-ai --deck <deck_id> (--from-file <path> | --stdin) [--dry-run]`
-  - reads one front per line and asks AI to generate `back`, `pronunciation` (IPA), `description` (usage example in source language);
+  - reads one front per line and asks AI to generate `back`, `pronunciation` (IPA), `example` (usage example in source language), `conjugation` (optional);
   - works with any deck ID from `deck list`;
   - applies normalization: trim, skip empty lines, skip `#` comment lines;
   - prints per-item result and deterministic summary counters;
@@ -209,7 +209,7 @@ View logs: `docker compose logs -f wordbot`. Stop: `docker compose down`.
 - `/whoami` - show your Telegram user ID.
 - `/deck_create <from> <to> <name...>` - create deck.
 - `/deck_list` - list your decks.
-- `/card_add <deck_id> | <front> | <back> | <pronunciation> | <description>` - add card.
+- `/card_add <deck_id> | <front> | <back> | <pronunciation> | <example> | <conjugation>` - add card.
 - `/card_add_batch_ai <deck_id>` + newline-separated fronts - add cards via AI.
 - `/next <deck_id>` - show next due card with inline actions.
 
@@ -272,7 +272,7 @@ export WORDLEARN_DB_PATH=./e2e.db
 go run ./cmd/wordcli deck create EN RU "English Basics"
 
 # 3) Add a card
-go run ./cmd/wordcli card add --deck 1 --front "banished" --back "изгнанный" --pronunciation "/banished/" --description "He was banished from the kingdom."
+go run ./cmd/wordcli card add --deck 1 --front "banished" --back "изгнанный" --pronunciation "/banished/" --example "He was banished from the kingdom."
 
 # 4) Verify card is active
 go run ./cmd/wordcli card list --deck 1 --status active

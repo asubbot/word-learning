@@ -34,7 +34,8 @@ func TestNextCardForDeck_RespectsDueAndRemoved(t *testing.T) {
 		Front:         "banished",
 		Back:          "exiled",
 		Pronunciation: "/banished/",
-		Description:   "sample",
+		Example:       "sample",
+		Conjugation:   "",
 	})
 	if err != nil {
 		t.Fatalf("create card: %v", err)

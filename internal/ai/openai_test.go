@@ -73,7 +73,7 @@ func TestGenerateCard_Success(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{
-				{"message": map[string]any{"content": `{"back":"изгнанный","pronunciation":"/banished/","description":"desc"}`}},
+				{"message": map[string]any{"content": `{"back":"изгнанный","pronunciation":"/banished/","example":"desc","conjugation":""}`}},
 			},
 		})
 	}))
@@ -152,7 +152,7 @@ func TestGenerateCard_RetryableTimeout(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{
-				{"message": map[string]any{"content": `{"back":"ok","pronunciation":"","description":""}`}},
+				{"message": map[string]any{"content": `{"back":"ok","pronunciation":"","example":"","conjugation":""}`}},
 			},
 		})
 	}))
@@ -188,7 +188,7 @@ func TestGenerateCard_MissingPromptFile(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{
-				{"message": map[string]any{"content": `{"back":"ok","pronunciation":"","description":""}`}},
+				{"message": map[string]any{"content": `{"back":"ok","pronunciation":"","example":"","conjugation":""}`}},
 			},
 		})
 	}))
@@ -226,7 +226,7 @@ func TestGenerateCard_EmptyPromptFile(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{
-				{"message": map[string]any{"content": `{"back":"ok","pronunciation":"","description":""}`}},
+				{"message": map[string]any{"content": `{"back":"ok","pronunciation":"","example":"","conjugation":""}`}},
 			},
 		})
 	}))
@@ -259,7 +259,7 @@ func TestGenerateCard_NormalizesLanguagePairInPromptFileName(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{
-				{"message": map[string]any{"content": `{"back":"ok","pronunciation":"","description":""}`}},
+				{"message": map[string]any{"content": `{"back":"ok","pronunciation":"","example":"","conjugation":""}`}},
 			},
 		})
 	}))

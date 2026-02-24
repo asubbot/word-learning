@@ -68,7 +68,8 @@ func (s *Service) AddCardsBatchAIForUser(ctx context.Context, telegramUserID int
 
 		back := strings.TrimSpace(generated.Back)
 		pronunciation := strings.TrimSpace(generated.Pronunciation)
-		description := strings.TrimSpace(generated.Description)
+		example := strings.TrimSpace(generated.Example)
+		conjugation := strings.TrimSpace(generated.Conjugation)
 		if back == "" {
 			item.Status = BatchAddStatusFailedValidation
 			item.Reason = "generated back is empty"
@@ -82,7 +83,7 @@ func (s *Service) AddCardsBatchAIForUser(ctx context.Context, telegramUserID int
 			continue
 		}
 
-		_, addErr := s.AddCardForUser(ctx, telegramUserID, params.DeckID, front, back, pronunciation, description)
+		_, addErr := s.AddCardForUser(ctx, telegramUserID, params.DeckID, front, back, pronunciation, example, conjugation)
 		if addErr == nil {
 			item.Status = BatchAddStatusCreated
 			report.AddItem(item)

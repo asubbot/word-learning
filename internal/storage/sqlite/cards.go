@@ -15,7 +15,8 @@ type CardCreateParams struct {
 	Front         string
 	Back          string
 	Pronunciation string
-	Description   string
+	Example       string
+	Conjugation   string
 }
 
 type DeckCardStats struct {
@@ -58,12 +59,13 @@ func (s *Store) CardFrontExistsInDeckForOwner(ctx context.Context, deckID int64,
 func (s *Store) CreateCard(ctx context.Context, params CardCreateParams) (domain.Card, error) {
 	result, err := s.db.ExecContext(
 		ctx,
-		`INSERT INTO cards (deck_id, front, back, pronunciation, description, status) VALUES (?, ?, ?, ?, ?, 'active')`,
+		`INSERT INTO cards (deck_id, front, back, pronunciation, example, conjugation, status) VALUES (?, ?, ?, ?, ?, ?, 'active')`,
 		params.DeckID,
 		params.Front,
 		params.Back,
 		params.Pronunciation,
-		params.Description,
+		params.Example,
+		params.Conjugation,
 	)
 	if err != nil {
 		return domain.Card{}, fmt.Errorf("insert card: %w", err)
@@ -85,7 +87,7 @@ func (s *Store) CreateCard(ctx context.Context, params CardCreateParams) (domain
 }
 
 func (s *Store) ListCards(ctx context.Context, deckID int64, status *domain.CardStatus) (cards []domain.Card, err error) {
-	query := `SELECT id, deck_id, front, back, pronunciation, description, status, next_due_at, interval_sec, ease, lapses, last_reviewed_at FROM cards WHERE deck_id = ?`
+	query := `SELECT id, deck_id, front, back, pronunciation, example, conjugation, status, next_due_at, interval_sec, ease, lapses, last_reviewed_at FROM cards WHERE deck_id = ?`
 	args := []any{deckID}
 	if status != nil {
 		query += ` AND status = ?`
@@ -119,7 +121,7 @@ func (s *Store) ListCards(ctx context.Context, deckID int64, status *domain.Card
 }
 
 func (s *Store) ListCardsForOwner(ctx context.Context, deckID int64, telegramUserID int64, status *domain.CardStatus) (cards []domain.Card, err error) {
-	query := `SELECT c.id, c.deck_id, c.front, c.back, c.pronunciation, c.description, c.status, c.next_due_at, c.interval_sec, c.ease, c.lapses, c.last_reviewed_at
+	query := `SELECT c.id, c.deck_id, c.front, c.back, c.pronunciation, c.example, c.conjugation, c.status, c.next_due_at, c.interval_sec, c.ease, c.lapses, c.last_reviewed_at
 		FROM cards c
 		INNER JOIN decks d ON d.id = c.deck_id
 		WHERE c.deck_id = ? AND d.telegram_user_id = ?`
@@ -157,7 +159,7 @@ func (s *Store) ListCardsForOwner(ctx context.Context, deckID int64, telegramUse
 func (s *Store) GetCardByID(ctx context.Context, cardID int64) (*domain.Card, error) {
 	row := s.db.QueryRowContext(
 		ctx,
-		`SELECT id, deck_id, front, back, pronunciation, description, status, next_due_at, interval_sec, ease, lapses, last_reviewed_at
+		`SELECT id, deck_id, front, back, pronunciation, example, conjugation, status, next_due_at, interval_sec, ease, lapses, last_reviewed_at
 		 FROM cards
 		 WHERE id = ?`,
 		cardID,
@@ -175,7 +177,7 @@ func (s *Store) GetCardByID(ctx context.Context, cardID int64) (*domain.Card, er
 func (s *Store) GetCardByIDForOwner(ctx context.Context, cardID int64, telegramUserID int64) (*domain.Card, error) {
 	row := s.db.QueryRowContext(
 		ctx,
-		`SELECT c.id, c.deck_id, c.front, c.back, c.pronunciation, c.description, c.status, c.next_due_at, c.interval_sec, c.ease, c.lapses, c.last_reviewed_at
+		`SELECT c.id, c.deck_id, c.front, c.back, c.pronunciation, c.example, c.conjugation, c.status, c.next_due_at, c.interval_sec, c.ease, c.lapses, c.last_reviewed_at
 		 FROM cards c
 		 INNER JOIN decks d ON d.id = c.deck_id
 		 WHERE c.id = ? AND d.telegram_user_id = ?`,
@@ -262,7 +264,7 @@ func (s *Store) UpdateCardSchedule(ctx context.Context, cardID int64, nextDueAt 
 func (s *Store) NextCardForDeck(ctx context.Context, deckID int64, now time.Time) (*domain.Card, error) {
 	row := s.db.QueryRowContext(
 		ctx,
-		`SELECT id, deck_id, front, back, pronunciation, description, status, next_due_at, interval_sec, ease, lapses, last_reviewed_at
+		`SELECT id, deck_id, front, back, pronunciation, example, conjugation, status, next_due_at, interval_sec, ease, lapses, last_reviewed_at
 		 FROM cards
 		 WHERE deck_id = ?
 		   AND status = 'active'
@@ -287,7 +289,7 @@ func (s *Store) NextCardForDeck(ctx context.Context, deckID int64, now time.Time
 func (s *Store) NextCardForDeckForOwner(ctx context.Context, deckID int64, telegramUserID int64, now time.Time) (*domain.Card, error) {
 	row := s.db.QueryRowContext(
 		ctx,
-		`SELECT c.id, c.deck_id, c.front, c.back, c.pronunciation, c.description, c.status, c.next_due_at, c.interval_sec, c.ease, c.lapses, c.last_reviewed_at
+		`SELECT c.id, c.deck_id, c.front, c.back, c.pronunciation, c.example, c.conjugation, c.status, c.next_due_at, c.interval_sec, c.ease, c.lapses, c.last_reviewed_at
 		 FROM cards c
 		 INNER JOIN decks d ON d.id = c.deck_id
 		 WHERE c.deck_id = ?
@@ -362,7 +364,8 @@ func scanCard(scanner interface{ Scan(dest ...any) error }) (domain.Card, error)
 		&card.Front,
 		&card.Back,
 		&card.Pronunciation,
-		&card.Description,
+		&card.Example,
+		&card.Conjugation,
 		&status,
 		&nextDueAt,
 		&card.IntervalSec,

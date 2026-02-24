@@ -44,8 +44,11 @@ func printCardDetails(card domain.Card) {
 	if card.Pronunciation != "" {
 		fmt.Printf("Pronunciation: %s\n", card.Pronunciation)
 	}
-	if card.Description != "" {
-		fmt.Printf("Description: %s\n", card.Description)
+	if card.Conjugation != "" {
+		fmt.Printf("Conjugation: %s\n", card.Conjugation)
+	}
+	if card.Example != "" {
+		fmt.Printf("Example: %s\n", card.Example)
 	}
 	fmt.Printf("Status: %s\n", card.Status)
 }

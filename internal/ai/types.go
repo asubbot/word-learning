@@ -11,7 +11,8 @@ type GenerateCardRequest struct {
 type GeneratedCard struct {
 	Back          string
 	Pronunciation string
-	Description   string
+	Example       string
+	Conjugation   string
 }
 
 type Generator interface {

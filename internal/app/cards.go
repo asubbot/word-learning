@@ -21,11 +21,11 @@ type DeckStats struct {
 	Total     int64
 }
 
-func (s *Service) AddCard(ctx context.Context, deckID int64, front, back, pronunciation, description string) (domain.Card, error) {
-	return s.AddCardForUser(ctx, 0, deckID, front, back, pronunciation, description)
+func (s *Service) AddCard(ctx context.Context, deckID int64, front, back, pronunciation, example, conjugation string) (domain.Card, error) {
+	return s.AddCardForUser(ctx, 0, deckID, front, back, pronunciation, example, conjugation)
 }
 
-func (s *Service) AddCardToDeck(ctx context.Context, deckID int64, front, back, pronunciation, description string) (domain.Card, error) {
+func (s *Service) AddCardToDeck(ctx context.Context, deckID int64, front, back, pronunciation, example, conjugation string) (domain.Card, error) {
 	deck, err := s.store.GetDeckByID(ctx, deckID)
 	if err != nil {
 		return domain.Card{}, err
@@ -33,10 +33,10 @@ func (s *Service) AddCardToDeck(ctx context.Context, deckID int64, front, back, 
 	if deck == nil {
 		return domain.Card{}, fmt.Errorf("deck %d does not exist", deckID)
 	}
-	return s.AddCardForUser(ctx, deck.TelegramUserID, deckID, front, back, pronunciation, description)
+	return s.AddCardForUser(ctx, deck.TelegramUserID, deckID, front, back, pronunciation, example, conjugation)
 }
 
-func (s *Service) AddCardForUser(ctx context.Context, telegramUserID, deckID int64, front, back, pronunciation, description string) (domain.Card, error) {
+func (s *Service) AddCardForUser(ctx context.Context, telegramUserID, deckID int64, front, back, pronunciation, example, conjugation string) (domain.Card, error) {
 	if deckID <= 0 {
 		return domain.Card{}, fmt.Errorf("--deck must be a positive integer")
 	}
@@ -44,7 +44,8 @@ func (s *Service) AddCardForUser(ctx context.Context, telegramUserID, deckID int
 	front = strings.TrimSpace(front)
 	back = strings.TrimSpace(back)
 	pronunciation = strings.TrimSpace(pronunciation)
-	description = strings.TrimSpace(description)
+	example = strings.TrimSpace(example)
+	conjugation = strings.TrimSpace(conjugation)
 	if front == "" {
 		return domain.Card{}, fmt.Errorf("front must not be empty")
 	}
@@ -73,7 +74,8 @@ func (s *Service) AddCardForUser(ctx context.Context, telegramUserID, deckID int
 		Front:         front,
 		Back:          back,
 		Pronunciation: pronunciation,
-		Description:   description,
+		Example:       example,
+		Conjugation:   conjugation,
 	})
 }
 

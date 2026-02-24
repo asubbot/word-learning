@@ -106,14 +106,15 @@ func newCardAddCmd(ctx *commandContext) *cobra.Command {
 	var front string
 	var back string
 	var pronunciation string
-	var description string
+	var example string
+	var conjugation string
 
 	cmd := &cobra.Command{
 		Use:   "add",
 		Short: "Add a card",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			service := app.NewService(ctx.Store)
-			card, err := service.AddCardToDeck(context.Background(), deckID, front, back, pronunciation, description)
+			card, err := service.AddCardToDeck(context.Background(), deckID, front, back, pronunciation, example, conjugation)
 			if err != nil {
 				return err
 			}
@@ -126,7 +127,8 @@ func newCardAddCmd(ctx *commandContext) *cobra.Command {
 	cmd.Flags().StringVar(&front, "front", "", "Front side (word/phrase)")
 	cmd.Flags().StringVar(&back, "back", "", "Back side (translation)")
 	cmd.Flags().StringVar(&pronunciation, "pronunciation", "", "Optional pronunciation (e.g. /banished/)")
-	cmd.Flags().StringVar(&description, "description", "", "Optional note/example")
+	cmd.Flags().StringVar(&example, "example", "", "Optional usage example")
+	cmd.Flags().StringVar(&conjugation, "conjugation", "", "Optional conjugation forms")
 	_ = cmd.MarkFlagRequired("deck")
 	_ = cmd.MarkFlagRequired("front")
 	_ = cmd.MarkFlagRequired("back")

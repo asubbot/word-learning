@@ -146,7 +146,7 @@ func TestAddCardToDeck_AndListCardsInDeck(t *testing.T) {
 		t.Fatalf("CreateDeckForOwner: %v", err)
 	}
 
-	card, err := svc.AddCardToDeck(ctx, botDeck.ID, "word", "перевод", "/w/", "example")
+	card, err := svc.AddCardToDeck(ctx, botDeck.ID, "word", "перевод", "/w/", "example", "")
 	if err != nil {
 		t.Fatalf("AddCardToDeck: %v", err)
 	}
@@ -173,7 +173,7 @@ func TestRemoveCardByID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateDeckForOwner: %v", err)
 	}
-	card, err := svc.AddCardToDeck(ctx, botDeck.ID, "word", "back", "", "")
+	card, err := svc.AddCardToDeck(ctx, botDeck.ID, "word", "back", "", "", "")
 	if err != nil {
 		t.Fatalf("AddCardToDeck: %v", err)
 	}
@@ -201,7 +201,7 @@ func TestNextCardWithStatsInDeck(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateDeckForOwner: %v", err)
 	}
-	card, err := svc.AddCardToDeck(ctx, botDeck.ID, "word", "back", "", "")
+	card, err := svc.AddCardToDeck(ctx, botDeck.ID, "word", "back", "", "", "")
 	if err != nil {
 		t.Fatalf("AddCardToDeck: %v", err)
 	}
@@ -228,7 +228,7 @@ func TestRestoreCardByID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateDeckForOwner: %v", err)
 	}
-	card, err := svc.AddCardToDeck(ctx, botDeck.ID, "word", "back", "", "")
+	card, err := svc.AddCardToDeck(ctx, botDeck.ID, "word", "back", "", "", "")
 	if err != nil {
 		t.Fatalf("AddCardToDeck: %v", err)
 	}
@@ -259,7 +259,7 @@ func TestRememberCardByID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateDeckForOwner: %v", err)
 	}
-	card, err := svc.AddCardToDeck(ctx, botDeck.ID, "word", "back", "", "")
+	card, err := svc.AddCardToDeck(ctx, botDeck.ID, "word", "back", "", "", "")
 	if err != nil {
 		t.Fatalf("AddCardToDeck: %v", err)
 	}
@@ -287,7 +287,7 @@ func TestDontRememberCardByID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateDeckForOwner: %v", err)
 	}
-	card, err := svc.AddCardToDeck(ctx, botDeck.ID, "word", "back", "", "")
+	card, err := svc.AddCardToDeck(ctx, botDeck.ID, "word", "back", "", "", "")
 	if err != nil {
 		t.Fatalf("AddCardToDeck: %v", err)
 	}
@@ -313,11 +313,11 @@ func TestServiceCardLifecycle(t *testing.T) {
 	ctx := context.Background()
 	deckID := mustCreateDeck(t, svc)
 
-	card, err := svc.AddCard(ctx, deckID, " banished ", " exiled ", " /banished/ ", "  sample ")
+	card, err := svc.AddCard(ctx, deckID, " banished ", " exiled ", " /banished/ ", "  sample ", "")
 	if err != nil {
 		t.Fatalf("AddCard: %v", err)
 	}
-	if card.Front != "banished" || card.Back != "exiled" || card.Pronunciation != "/banished/" || card.Description != "sample" {
+	if card.Front != "banished" || card.Back != "exiled" || card.Pronunciation != "/banished/" || card.Example != "sample" {
 		t.Fatalf("unexpected trimmed values: %#v", card)
 	}
 
@@ -429,22 +429,22 @@ func TestServiceCardValidationAndNotFound(t *testing.T) {
 	ctx := context.Background()
 	deckID := mustCreateDeck(t, svc)
 
-	if _, err := svc.AddCard(ctx, 0, "front", "back", "/f/", "desc"); err == nil {
+	if _, err := svc.AddCard(ctx, 0, "front", "back", "/f/", "desc", ""); err == nil {
 		t.Fatal("expected error for invalid deck id")
 	}
-	if _, err := svc.AddCard(ctx, deckID, " ", "back", "/f/", "desc"); err == nil {
+	if _, err := svc.AddCard(ctx, deckID, " ", "back", "/f/", "desc", ""); err == nil {
 		t.Fatal("expected error for empty front")
 	}
-	if _, err := svc.AddCard(ctx, deckID, "front", " ", "/f/", "desc"); err == nil {
+	if _, err := svc.AddCard(ctx, deckID, "front", " ", "/f/", "desc", ""); err == nil {
 		t.Fatal("expected error for empty back")
 	}
-	if _, err := svc.AddCard(ctx, 999, "front", "back", "/f/", "desc"); err == nil {
+	if _, err := svc.AddCard(ctx, 999, "front", "back", "/f/", "desc", ""); err == nil {
 		t.Fatal("expected error for unknown deck")
 	}
-	if _, err := svc.AddCard(ctx, deckID, "duplicate", "one", "", ""); err != nil {
+	if _, err := svc.AddCard(ctx, deckID, "duplicate", "one", "", "", ""); err != nil {
 		t.Fatalf("unexpected error on first duplicate seed: %v", err)
 	}
-	if _, err := svc.AddCard(ctx, deckID, "  DuPlicate  ", "two", "", ""); !errors.Is(err, ErrCardAlreadyExists) {
+	if _, err := svc.AddCard(ctx, deckID, "  DuPlicate  ", "two", "", "", ""); !errors.Is(err, ErrCardAlreadyExists) {
 		t.Fatalf("expected ErrCardAlreadyExists, got %v", err)
 	}
 
@@ -504,12 +504,12 @@ func TestServiceOwnerIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateDeckForUser: %v", err)
 	}
-	card, err := svc.AddCardForUser(ctx, 101, deck.ID, "banished", "exiled", "", "")
+	card, err := svc.AddCardForUser(ctx, 101, deck.ID, "banished", "exiled", "", "", "")
 	if err != nil {
 		t.Fatalf("AddCardForUser owner 101: %v", err)
 	}
 
-	if _, err := svc.AddCardForUser(ctx, 202, deck.ID, "intrude", "fail", "", ""); err == nil {
+	if _, err := svc.AddCardForUser(ctx, 202, deck.ID, "intrude", "fail", "", "", ""); err == nil {
 		t.Fatal("expected add card error for foreign owner")
 	}
 

@@ -25,7 +25,8 @@ type Card struct {
 	Front          string
 	Back           string
 	Pronunciation  string
-	Description    string
+	Example        string
+	Conjugation    string
 	Status         CardStatus
 	NextDueAt      time.Time
 	IntervalSec    int64

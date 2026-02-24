@@ -115,7 +115,8 @@ type chatCompletionsResponse struct {
 type generatedPayload struct {
 	Back          string `json:"back"`
 	Pronunciation string `json:"pronunciation"`
-	Description   string `json:"description"`
+	Example       string `json:"example"`
+	Conjugation   string `json:"conjugation"`
 }
 
 func (g *OpenAIGenerator) GenerateCard(ctx context.Context, req GenerateCardRequest) (GeneratedCard, error) {

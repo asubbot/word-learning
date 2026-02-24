@@ -74,7 +74,8 @@ func (fakeAIGenerator) GenerateCard(ctx context.Context, req ai.GenerateCardRequ
 	return ai.GeneratedCard{
 		Back:          "translated-" + req.Front,
 		Pronunciation: "/p/",
-		Description:   "d",
+		Example:       "d",
+		Conjugation:   "",
 	}, nil
 }
 
@@ -142,7 +143,7 @@ func TestBotCallbackOwnershipProtection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create deck: %v", err)
 	}
-	card, err := h.service.AddCardForUser(ctx, 1, deck.ID, "banished", "изгнанный", "", "")
+	card, err := h.service.AddCardForUser(ctx, 1, deck.ID, "banished", "изгнанный", "", "", "")
 	if err != nil {
 		t.Fatalf("add card: %v", err)
 	}

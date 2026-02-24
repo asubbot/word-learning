@@ -76,15 +76,15 @@ func TestListCardsWithStatusFilter(t *testing.T) {
 		t.Fatalf("CreateDeck: %v", err)
 	}
 
-	activeCard, err := store.CreateCard(ctx, CardCreateParams{DeckID: deck.ID, Front: "a", Back: "a", Pronunciation: "/a/", Description: ""})
+	activeCard, err := store.CreateCard(ctx, CardCreateParams{DeckID: deck.ID, Front: "a", Back: "a", Pronunciation: "/a/", Example: ""})
 	if err != nil {
 		t.Fatalf("CreateCard active: %v", err)
 	}
-	postponedCard, err := store.CreateCard(ctx, CardCreateParams{DeckID: deck.ID, Front: "b", Back: "b", Pronunciation: "/b/", Description: ""})
+	postponedCard, err := store.CreateCard(ctx, CardCreateParams{DeckID: deck.ID, Front: "b", Back: "b", Pronunciation: "/b/", Example: ""})
 	if err != nil {
 		t.Fatalf("CreateCard postponed: %v", err)
 	}
-	removedCard, err := store.CreateCard(ctx, CardCreateParams{DeckID: deck.ID, Front: "c", Back: "c", Pronunciation: "/c/", Description: ""})
+	removedCard, err := store.CreateCard(ctx, CardCreateParams{DeckID: deck.ID, Front: "c", Back: "c", Pronunciation: "/c/", Example: ""})
 	if err != nil {
 		t.Fatalf("CreateCard removed: %v", err)
 	}
@@ -323,7 +323,7 @@ func TestCardFrontExistsInDeckForOwner(t *testing.T) {
 		t.Fatalf("CreateDeckForOwner owner1: %v", err)
 	}
 	if _, err := store.CreateCard(ctx, CardCreateParams{
-		DeckID: deck.ID, Front: "Banished", Back: "изгнанный", Pronunciation: "/banished/", Description: "",
+		DeckID: deck.ID, Front: "Banished", Back: "изгнанный", Pronunciation: "/banished/", Example: "",
 	}); err != nil {
 		t.Fatalf("CreateCard: %v", err)
 	}

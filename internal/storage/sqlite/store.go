@@ -26,7 +26,8 @@ CREATE TABLE IF NOT EXISTS cards (
   front TEXT NOT NULL,
   back TEXT NOT NULL,
   pronunciation TEXT NOT NULL DEFAULT '',
-  description TEXT NOT NULL DEFAULT '',
+  example TEXT NOT NULL DEFAULT '',
+  conjugation TEXT NOT NULL DEFAULT '',
   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'removed')),
   next_due_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   interval_sec INTEGER NOT NULL DEFAULT 0,
@@ -78,6 +79,7 @@ func (s *Store) InitSchema(ctx context.Context) error {
 	return s.runSchemaSteps(ctx, []schemaStep{
 		{name: "initialize schema", run: s.applyBaseSchema},
 		{name: "ensure legacy columns", run: s.ensureLegacyColumns},
+		{name: "backfill examples", run: s.backfillCardExampleFromDescription},
 		{name: "backfill due dates", run: s.backfillCardDueDates},
 		{name: "ensure indexes", run: s.ensureIndexes},
 	})
@@ -105,6 +107,8 @@ func (s *Store) ensureLegacyColumns(ctx context.Context) error {
 		definition string
 	}{
 		{name: "pronunciation", definition: "TEXT NOT NULL DEFAULT ''"},
+		{name: "example", definition: "TEXT NOT NULL DEFAULT ''"},
+		{name: "conjugation", definition: "TEXT NOT NULL DEFAULT ''"},
 		{name: "next_due_at", definition: "DATETIME"},
 		{name: "interval_sec", definition: "INTEGER NOT NULL DEFAULT 0"},
 		{name: "ease", definition: "REAL NOT NULL DEFAULT 2.5"},
@@ -130,6 +134,23 @@ func (s *Store) backfillCardDueDates(ctx context.Context) error {
 		 WHERE next_due_at IS NULL`,
 	); err != nil {
 		return fmt.Errorf("backfill cards.next_due_at: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) backfillCardExampleFromDescription(ctx context.Context) error {
+	if _, err := s.db.ExecContext(
+		ctx,
+		`UPDATE cards
+		 SET example = COALESCE(NULLIF(example, ''), description, '')
+		 WHERE example = ''`,
+	); err != nil {
+		// Old databases may not have description column (new schema). Ignore missing-column errors.
+		msg := strings.ToLower(err.Error())
+		if strings.Contains(msg, "no such column: description") {
+			return nil
+		}
+		return fmt.Errorf("backfill cards.example from description: %w", err)
 	}
 	return nil
 }
