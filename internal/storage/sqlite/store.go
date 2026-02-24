@@ -48,6 +48,11 @@ type Store struct {
 	db *sql.DB
 }
 
+type schemaStep struct {
+	name string
+	run  func(context.Context) error
+}
+
 func Open(path string) (*Store, error) {
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
@@ -70,32 +75,54 @@ func (s *Store) Close() error {
 }
 
 func (s *Store) InitSchema(ctx context.Context) error {
-	if _, err := s.db.ExecContext(ctx, schemaSQL); err != nil {
-		return fmt.Errorf("initialize schema: %w", err)
-	}
+	return s.runSchemaSteps(ctx, []schemaStep{
+		{name: "initialize schema", run: s.applyBaseSchema},
+		{name: "ensure legacy columns", run: s.ensureLegacyColumns},
+		{name: "backfill due dates", run: s.backfillCardDueDates},
+		{name: "ensure indexes", run: s.ensureIndexes},
+	})
+}
 
-	if err := s.addCardColumnIfMissing(ctx, "pronunciation", "TEXT NOT NULL DEFAULT ''"); err != nil {
+func (s *Store) runSchemaSteps(ctx context.Context, steps []schemaStep) error {
+	for _, step := range steps {
+		if err := step.run(ctx); err != nil {
+			return fmt.Errorf("%s: %w", step.name, err)
+		}
+	}
+	return nil
+}
+
+func (s *Store) applyBaseSchema(ctx context.Context) error {
+	if _, err := s.db.ExecContext(ctx, schemaSQL); err != nil {
 		return err
+	}
+	return nil
+}
+
+func (s *Store) ensureLegacyColumns(ctx context.Context) error {
+	cardColumns := []struct {
+		name       string
+		definition string
+	}{
+		{name: "pronunciation", definition: "TEXT NOT NULL DEFAULT ''"},
+		{name: "next_due_at", definition: "DATETIME"},
+		{name: "interval_sec", definition: "INTEGER NOT NULL DEFAULT 0"},
+		{name: "ease", definition: "REAL NOT NULL DEFAULT 2.5"},
+		{name: "lapses", definition: "INTEGER NOT NULL DEFAULT 0"},
+		{name: "last_reviewed_at", definition: "DATETIME NULL"},
+	}
+	for _, column := range cardColumns {
+		if err := s.addCardColumnIfMissing(ctx, column.name, column.definition); err != nil {
+			return err
+		}
 	}
 	if err := s.addDeckColumnIfMissing(ctx, "telegram_user_id", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
-	if err := s.addCardColumnIfMissing(ctx, "next_due_at", "DATETIME"); err != nil {
-		return err
-	}
-	if err := s.addCardColumnIfMissing(ctx, "interval_sec", "INTEGER NOT NULL DEFAULT 0"); err != nil {
-		return err
-	}
-	if err := s.addCardColumnIfMissing(ctx, "ease", "REAL NOT NULL DEFAULT 2.5"); err != nil {
-		return err
-	}
-	if err := s.addCardColumnIfMissing(ctx, "lapses", "INTEGER NOT NULL DEFAULT 0"); err != nil {
-		return err
-	}
-	if err := s.addCardColumnIfMissing(ctx, "last_reviewed_at", "DATETIME NULL"); err != nil {
-		return err
-	}
+	return nil
+}
 
+func (s *Store) backfillCardDueDates(ctx context.Context) error {
 	if _, err := s.db.ExecContext(
 		ctx,
 		`UPDATE cards
@@ -104,20 +131,28 @@ func (s *Store) InitSchema(ctx context.Context) error {
 	); err != nil {
 		return fmt.Errorf("backfill cards.next_due_at: %w", err)
 	}
+	return nil
+}
 
-	if _, err := s.db.ExecContext(
-		ctx,
-		`CREATE INDEX IF NOT EXISTS idx_cards_deck_due ON cards(deck_id, status, next_due_at)`,
-	); err != nil {
-		return fmt.Errorf("create index idx_cards_deck_due: %w", err)
+func (s *Store) ensureIndexes(ctx context.Context) error {
+	statements := []struct {
+		name string
+		sql  string
+	}{
+		{
+			name: "idx_cards_deck_due",
+			sql:  `CREATE INDEX IF NOT EXISTS idx_cards_deck_due ON cards(deck_id, status, next_due_at)`,
+		},
+		{
+			name: "idx_decks_owner_id",
+			sql:  `CREATE INDEX IF NOT EXISTS idx_decks_owner_id ON decks(telegram_user_id, id)`,
+		},
 	}
-	if _, err := s.db.ExecContext(
-		ctx,
-		`CREATE INDEX IF NOT EXISTS idx_decks_owner_id ON decks(telegram_user_id, id)`,
-	); err != nil {
-		return fmt.Errorf("create index idx_decks_owner_id: %w", err)
+	for _, stmt := range statements {
+		if _, err := s.db.ExecContext(ctx, stmt.sql); err != nil {
+			return fmt.Errorf("create index %s: %w", stmt.name, err)
+		}
 	}
-
 	return nil
 }
 

@@ -272,14 +272,16 @@ make fmt
 make test
 make vet
 make lint
+make cyclo
 make coverage
 make coverage-html
 make check
 ```
 
 `make lint` uses `golangci-lint`; if missing, the command prints an install link.
+`make cyclo` runs `gocyclo` against non-test files.
 `make coverage` prints textual coverage summary; `make coverage-html` generates `coverage.html`.
-`make check` runs `fmt + vet + lint + coverage`.
+`make check` runs `fmt + vet + lint + cyclo + coverage`.
 
 ## Bot E2E Smoke Scenario
 

@@ -31,6 +31,18 @@ type handler struct {
 	allow   map[int64]struct{}
 }
 
+type commandHandler func(context.Context, *tgbotapi.Message, int64) error
+type callbackActionHandler func(context.Context, int64, int64) error
+
+type callbackTarget struct {
+	callbackID string
+	chatID     int64
+	userID     int64
+	cardID     int64
+	deckID     int64
+	action     string
+}
+
 type callbackDeduper struct {
 	mu    sync.Mutex
 	items map[string]time.Time
@@ -131,57 +143,20 @@ func (h *handler) handleUpdate(ctx context.Context, update tgbotapi.Update) erro
 func (h *handler) handleCommand(ctx context.Context, msg *tgbotapi.Message) error {
 	command := strings.ToLower(msg.Command())
 	userID := msg.From.ID
-
-	switch command {
-	case "start":
-		return h.sendText(msg.Chat.ID, helpMessage())
-	case "help":
-		return h.sendText(msg.Chat.ID, helpMessage())
-	case "whoami":
-		return h.sendText(msg.Chat.ID, fmt.Sprintf("Your Telegram user ID: %d", userID))
-	case "deck_create":
-		name, langFrom, langTo, err := parseDeckCreateArgs(msg.CommandArguments())
-		if err != nil {
-			return h.sendText(msg.Chat.ID, err.Error())
-		}
-		deck, err := h.service.CreateDeckForUser(ctx, userID, name, langFrom, langTo)
-		if err != nil {
-			return h.sendText(msg.Chat.ID, fmt.Sprintf("Failed to create deck: %v", err))
-		}
-		return h.sendText(msg.Chat.ID, fmt.Sprintf("Deck created: id=%d name=%q pair=%s->%s", deck.ID, deck.Name, deck.LanguageFrom, deck.LanguageTo))
-	case "deck_list":
-		decks, err := h.service.ListDecksForUser(ctx, userID)
-		if err != nil {
-			return h.sendText(msg.Chat.ID, fmt.Sprintf("Failed to list decks: %v", err))
-		}
-		if len(decks) == 0 {
-			return h.sendText(msg.Chat.ID, "No decks found.")
-		}
-		var b strings.Builder
-		b.WriteString("Your decks:\n")
-		for _, d := range decks {
-			fmt.Fprintf(&b, "- #%d %s (%s->%s)\n", d.ID, d.Name, d.LanguageFrom, d.LanguageTo)
-		}
-		return h.sendText(msg.Chat.ID, strings.TrimSpace(b.String()))
-	case "card_add":
-		deckID, front, back, pronunciation, description, err := parseCardAddArgs(msg.CommandArguments())
-		if err != nil {
-			return h.sendText(msg.Chat.ID, err.Error())
-		}
-		card, err := h.service.AddCardForUser(ctx, userID, deckID, front, back, pronunciation, description)
-		if err != nil {
-			return h.sendText(msg.Chat.ID, fmt.Sprintf("Failed to add card: %v", err))
-		}
-		return h.sendText(msg.Chat.ID, fmt.Sprintf("Card created: id=%d deck=%d", card.ID, card.DeckID))
-	case "next":
-		deckID, err := parseDeckIDArg(msg.CommandArguments())
-		if err != nil {
-			return h.sendText(msg.Chat.ID, err.Error())
-		}
-		return h.sendNextCard(ctx, msg.Chat.ID, userID, deckID)
-	default:
+	handlers := map[string]commandHandler{
+		"start":       h.handleStartCommand,
+		"help":        h.handleHelpCommand,
+		"whoami":      h.handleWhoAmICommand,
+		"deck_create": h.handleDeckCreateCommand,
+		"deck_list":   h.handleDeckListCommand,
+		"card_add":    h.handleCardAddCommand,
+		"next":        h.handleNextCommand,
+	}
+	handlerFn, ok := handlers[command]
+	if !ok {
 		return h.sendText(msg.Chat.ID, "Unknown command. Use /help.")
 	}
+	return handlerFn(ctx, msg, userID)
 }
 
 func (h *handler) handleCallback(ctx context.Context, cb *tgbotapi.CallbackQuery) error {
@@ -192,41 +167,138 @@ func (h *handler) handleCallback(ctx context.Context, cb *tgbotapi.CallbackQuery
 		return h.answerCallback(cb.ID, "Already processed.")
 	}
 
+	target, ok := h.resolveCallbackTarget(ctx, cb)
+	if !ok {
+		return nil
+	}
+	if err := h.executeCallbackAction(ctx, target); err != nil {
+		_ = h.answerCallback(target.callbackID, "Action failed")
+		return nil
+	}
+	if err := h.answerCallback(target.callbackID, "Done"); err != nil {
+		h.log.Warn("answer callback", "error", err)
+	}
+	return h.sendNextCard(ctx, target.chatID, target.userID, target.deckID)
+}
+
+func (h *handler) resolveCallbackTarget(ctx context.Context, cb *tgbotapi.CallbackQuery) (callbackTarget, bool) {
 	action, cardID, deckID, err := parseCallbackData(cb.Data)
 	if err != nil {
 		_ = h.answerCallback(cb.ID, "Invalid action payload")
-		return nil
+		return callbackTarget{}, false
 	}
-
 	card, err := h.service.GetCardByIDForUser(ctx, cb.From.ID, cardID)
 	if err != nil {
 		_ = h.answerCallback(cb.ID, "Card not found")
-		return nil
+		return callbackTarget{}, false
 	}
 	if card.DeckID != deckID {
 		_ = h.answerCallback(cb.ID, "Card/deck mismatch")
-		return nil
+		return callbackTarget{}, false
 	}
+	return callbackTarget{
+		callbackID: cb.ID,
+		chatID:     cb.Message.Chat.ID,
+		userID:     cb.From.ID,
+		cardID:     cardID,
+		deckID:     deckID,
+		action:     action,
+	}, true
+}
 
-	switch action {
-	case "remember":
-		err = h.service.RememberCardForUser(ctx, cb.From.ID, cardID)
-	case "dont_remember":
-		err = h.service.DontRememberCardForUser(ctx, cb.From.ID, cardID)
-	case "remove":
-		err = h.service.RemoveCardForUser(ctx, cb.From.ID, cardID)
-	default:
-		err = fmt.Errorf("unknown action")
+func (h *handler) executeCallbackAction(ctx context.Context, target callbackTarget) error {
+	actions := map[string]callbackActionHandler{
+		"remember":      h.service.RememberCardForUser,
+		"dont_remember": h.service.DontRememberCardForUser,
+		"remove":        h.service.RemoveCardForUser,
 	}
+	actionFn, ok := actions[target.action]
+	if !ok {
+		return fmt.Errorf("unknown action")
+	}
+	return actionFn(ctx, target.userID, target.cardID)
+}
+
+func parseCallbackData(data string) (string, int64, int64, error) {
+	fields := parseKVPayload(data, ";", "=")
+	action := strings.TrimSpace(fields["act"])
+	cardRaw := strings.TrimSpace(fields["card"])
+	deckRaw := strings.TrimSpace(fields["deck"])
+	if action == "" || cardRaw == "" || deckRaw == "" {
+		return "", 0, 0, fmt.Errorf("missing callback fields")
+	}
+	cardID, err := parsePositiveInt(cardRaw, "invalid card id")
 	if err != nil {
-		_ = h.answerCallback(cb.ID, "Action failed")
-		return nil
+		return "", 0, 0, err
 	}
+	deckID, err := parsePositiveInt(deckRaw, "invalid deck id")
+	if err != nil {
+		return "", 0, 0, err
+	}
+	return action, cardID, deckID, nil
+}
 
-	if err := h.answerCallback(cb.ID, "Done"); err != nil {
-		h.log.Warn("answer callback", "error", err)
+func (h *handler) handleStartCommand(ctx context.Context, msg *tgbotapi.Message, userID int64) error {
+	_ = ctx
+	_ = userID
+	return h.sendText(msg.Chat.ID, helpMessage())
+}
+
+func (h *handler) handleHelpCommand(ctx context.Context, msg *tgbotapi.Message, userID int64) error {
+	return h.handleStartCommand(ctx, msg, userID)
+}
+
+func (h *handler) handleWhoAmICommand(ctx context.Context, msg *tgbotapi.Message, userID int64) error {
+	_ = ctx
+	return h.sendText(msg.Chat.ID, fmt.Sprintf("Your Telegram user ID: %d", userID))
+}
+
+func (h *handler) handleDeckCreateCommand(ctx context.Context, msg *tgbotapi.Message, userID int64) error {
+	name, langFrom, langTo, err := parseDeckCreateArgs(msg.CommandArguments())
+	if err != nil {
+		return h.sendText(msg.Chat.ID, err.Error())
 	}
-	return h.sendNextCard(ctx, cb.Message.Chat.ID, cb.From.ID, deckID)
+	deck, err := h.service.CreateDeckForUser(ctx, userID, name, langFrom, langTo)
+	if err != nil {
+		return h.sendText(msg.Chat.ID, fmt.Sprintf("Failed to create deck: %v", err))
+	}
+	return h.sendText(msg.Chat.ID, fmt.Sprintf("Deck created: id=%d name=%q pair=%s->%s", deck.ID, deck.Name, deck.LanguageFrom, deck.LanguageTo))
+}
+
+func (h *handler) handleDeckListCommand(ctx context.Context, msg *tgbotapi.Message, userID int64) error {
+	decks, err := h.service.ListDecksForUser(ctx, userID)
+	if err != nil {
+		return h.sendText(msg.Chat.ID, fmt.Sprintf("Failed to list decks: %v", err))
+	}
+	if len(decks) == 0 {
+		return h.sendText(msg.Chat.ID, "No decks found.")
+	}
+	var b strings.Builder
+	b.WriteString("Your decks:\n")
+	for _, d := range decks {
+		fmt.Fprintf(&b, "- #%d %s (%s->%s)\n", d.ID, d.Name, d.LanguageFrom, d.LanguageTo)
+	}
+	return h.sendText(msg.Chat.ID, strings.TrimSpace(b.String()))
+}
+
+func (h *handler) handleCardAddCommand(ctx context.Context, msg *tgbotapi.Message, userID int64) error {
+	deckID, front, back, pronunciation, description, err := parseCardAddArgs(msg.CommandArguments())
+	if err != nil {
+		return h.sendText(msg.Chat.ID, err.Error())
+	}
+	card, err := h.service.AddCardForUser(ctx, userID, deckID, front, back, pronunciation, description)
+	if err != nil {
+		return h.sendText(msg.Chat.ID, fmt.Sprintf("Failed to add card: %v", err))
+	}
+	return h.sendText(msg.Chat.ID, fmt.Sprintf("Card created: id=%d deck=%d", card.ID, card.DeckID))
+}
+
+func (h *handler) handleNextCommand(ctx context.Context, msg *tgbotapi.Message, userID int64) error {
+	deckID, err := parseDeckIDArg(msg.CommandArguments())
+	if err != nil {
+		return h.sendText(msg.Chat.ID, err.Error())
+	}
+	return h.sendNextCard(ctx, msg.Chat.ID, userID, deckID)
 }
 
 func (h *handler) sendNextCard(ctx context.Context, chatID int64, userID int64, deckID int64) error {
@@ -391,31 +463,25 @@ func actionKeyboard(cardID, deckID int64) tgbotapi.InlineKeyboardMarkup {
 	)
 }
 
-func parseCallbackData(data string) (string, int64, int64, error) {
-	parts := strings.Split(data, ";")
+func parseKVPayload(data, pairSeparator, kvSeparator string) map[string]string {
+	parts := strings.Split(data, pairSeparator)
 	fields := make(map[string]string, len(parts))
 	for _, p := range parts {
-		kv := strings.SplitN(p, "=", 2)
+		kv := strings.SplitN(p, kvSeparator, 2)
 		if len(kv) != 2 {
 			continue
 		}
 		fields[strings.TrimSpace(kv[0])] = strings.TrimSpace(kv[1])
 	}
-	action := fields["act"]
-	cardRaw := fields["card"]
-	deckRaw := fields["deck"]
-	if action == "" || cardRaw == "" || deckRaw == "" {
-		return "", 0, 0, fmt.Errorf("missing callback fields")
+	return fields
+}
+
+func parsePositiveInt(raw, errorMessage string) (int64, error) {
+	value, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || value <= 0 {
+		return 0, fmt.Errorf("%s", errorMessage)
 	}
-	cardID, err := strconv.ParseInt(cardRaw, 10, 64)
-	if err != nil || cardID <= 0 {
-		return "", 0, 0, fmt.Errorf("invalid card id")
-	}
-	deckID, err := strconv.ParseInt(deckRaw, 10, 64)
-	if err != nil || deckID <= 0 {
-		return "", 0, 0, fmt.Errorf("invalid deck id")
-	}
-	return action, cardID, deckID, nil
+	return value, nil
 }
 
 func renderCardMessage(card domain.Card, stats app.DeckStats) string {
