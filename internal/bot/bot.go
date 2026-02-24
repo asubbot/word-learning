@@ -13,6 +13,7 @@ import (
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"word-learning-cli/internal/ai"
 	"word-learning-cli/internal/app"
 	"word-learning-cli/internal/domain"
 	"word-learning-cli/internal/storage/sqlite"
@@ -24,11 +25,12 @@ type telegramAPI interface {
 }
 
 type handler struct {
-	api     telegramAPI
-	service *app.Service
-	log     *slog.Logger
-	dedupe  *callbackDeduper
-	allow   map[int64]struct{}
+	api            telegramAPI
+	service        *app.Service
+	log            *slog.Logger
+	dedupe         *callbackDeduper
+	allow          map[int64]struct{}
+	newAIGenerator func() (ai.Generator, error)
 }
 
 type commandHandler func(context.Context, *tgbotapi.Message, int64) error
@@ -85,11 +87,12 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 	}
 
 	h := &handler{
-		api:     api,
-		service: app.NewService(store),
-		log:     logger,
-		dedupe:  newCallbackDeduper(),
-		allow:   buildAllowlist(cfg.AllowedUserIDs),
+		api:            api,
+		service:        app.NewService(store),
+		log:            logger,
+		dedupe:         newCallbackDeduper(),
+		allow:          buildAllowlist(cfg.AllowedUserIDs),
+		newAIGenerator: ai.NewGeneratorFromEnv,
 	}
 
 	updateCfg := tgbotapi.NewUpdate(0)
@@ -144,13 +147,14 @@ func (h *handler) handleCommand(ctx context.Context, msg *tgbotapi.Message) erro
 	command := strings.ToLower(msg.Command())
 	userID := msg.From.ID
 	handlers := map[string]commandHandler{
-		"start":       h.handleStartCommand,
-		"help":        h.handleHelpCommand,
-		"whoami":      h.handleWhoAmICommand,
-		"deck_create": h.handleDeckCreateCommand,
-		"deck_list":   h.handleDeckListCommand,
-		"card_add":    h.handleCardAddCommand,
-		"next":        h.handleNextCommand,
+		"start":             h.handleStartCommand,
+		"help":              h.handleHelpCommand,
+		"whoami":            h.handleWhoAmICommand,
+		"deck_create":       h.handleDeckCreateCommand,
+		"deck_list":         h.handleDeckListCommand,
+		"card_add":          h.handleCardAddCommand,
+		"card_add_batch_ai": h.handleCardAddBatchAICommand,
+		"next":              h.handleNextCommand,
 	}
 	handlerFn, ok := handlers[command]
 	if !ok {
@@ -293,6 +297,44 @@ func (h *handler) handleCardAddCommand(ctx context.Context, msg *tgbotapi.Messag
 	return h.sendText(msg.Chat.ID, fmt.Sprintf("Card created: id=%d deck=%d", card.ID, card.DeckID))
 }
 
+func (h *handler) handleCardAddBatchAICommand(ctx context.Context, msg *tgbotapi.Message, userID int64) error {
+	deckID, lines, err := parseCardAddBatchAIArgs(msg.CommandArguments())
+	if err != nil {
+		return h.sendText(msg.Chat.ID, err.Error())
+	}
+	generator, err := h.newAIGenerator()
+	if err != nil {
+		return h.sendText(msg.Chat.ID, fmt.Sprintf("Failed to configure AI: %v", err))
+	}
+	report, err := h.service.AddCardsBatchAIForUser(ctx, userID, generator, app.BatchAddAIParams{
+		DeckID: deckID,
+		Lines:  lines,
+		Mode:   app.BatchModeBot,
+		DryRun: false,
+	})
+	if err != nil {
+		return h.sendText(msg.Chat.ID, fmt.Sprintf("Failed to add cards in batch: %v", err))
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "Batch summary: total=%d created=%d skipped_duplicates=%d failed=%d",
+		report.Summary.Total,
+		report.Summary.Created,
+		report.Summary.SkippedDuplicates,
+		report.Summary.Failed,
+	)
+	for _, item := range report.Items {
+		if item.Status == app.BatchAddStatusCreated {
+			continue
+		}
+		reason := strings.TrimSpace(item.Reason)
+		if reason == "" {
+			reason = string(item.Status)
+		}
+		fmt.Fprintf(&b, "\n- %s => %s (%s)", item.FrontNormalized, item.Status, reason)
+	}
+	return h.sendText(msg.Chat.ID, b.String())
+}
+
 func (h *handler) handleNextCommand(ctx context.Context, msg *tgbotapi.Message, userID int64) error {
 	deckID, err := parseDeckIDArg(msg.CommandArguments())
 	if err != nil {
@@ -400,6 +442,7 @@ func helpMessage() string {
 /deck_create <from> <to> <name...> - create deck
 /deck_list - list your decks
 /card_add <deck_id> | <front> | <back> | <pronunciation> | <description> - add card
+/card_add_batch_ai <deck_id> then newline-separated fronts - add cards via AI
 /next <deck_id> - show next due card with action buttons`) // raw user-visible text
 }
 
@@ -449,6 +492,24 @@ func parseCardAddArgs(args string) (int64, string, string, string, string, error
 		description = segments[4]
 	}
 	return deckID, front, back, pronunciation, description, nil
+}
+
+func parseCardAddBatchAIArgs(args string) (int64, []string, error) {
+	normalized := strings.ReplaceAll(args, "\r\n", "\n")
+	normalized = strings.ReplaceAll(normalized, "\r", "\n")
+	normalized = strings.TrimSpace(normalized)
+	if normalized == "" {
+		return 0, nil, fmt.Errorf("usage: /card_add_batch_ai <deck_id> followed by newline-separated fronts")
+	}
+	lines := strings.Split(normalized, "\n")
+	if len(lines) < 2 {
+		return 0, nil, fmt.Errorf("usage: /card_add_batch_ai <deck_id> followed by newline-separated fronts")
+	}
+	deckID, err := parsePositiveInt(strings.TrimSpace(lines[0]), "deck_id must be a positive integer")
+	if err != nil {
+		return 0, nil, err
+	}
+	return deckID, lines[1:], nil
 }
 
 func actionKeyboard(cardID, deckID int64) tgbotapi.InlineKeyboardMarkup {

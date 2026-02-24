@@ -2,12 +2,14 @@ package bot
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"word-learning-cli/internal/ai"
 	"word-learning-cli/internal/app"
 	"word-learning-cli/internal/storage/sqlite"
 )
@@ -53,7 +55,27 @@ func newTestHandler(t *testing.T) (*handler, *fakeAPI) {
 		service: app.NewService(store),
 		log:     slog.New(slog.NewTextHandler(testWriter{t: t}, nil)),
 		dedupe:  newCallbackDeduper(),
+		newAIGenerator: func() (ai.Generator, error) {
+			return fakeAIGenerator{}, nil
+		},
 	}, api
+}
+
+type fakeAIGenerator struct{}
+
+func (fakeAIGenerator) GenerateCard(ctx context.Context, req ai.GenerateCardRequest) (ai.GeneratedCard, error) {
+	_ = ctx
+	if strings.Contains(strings.ToLower(req.Front), "fail") {
+		return ai.GeneratedCard{}, fmt.Errorf("provider failed")
+	}
+	if strings.Contains(strings.ToLower(req.Front), "empty") {
+		return ai.GeneratedCard{Back: " "}, nil
+	}
+	return ai.GeneratedCard{
+		Back:          "translated-" + req.Front,
+		Pronunciation: "/p/",
+		Description:   "d",
+	}, nil
 }
 
 type testWriter struct {
@@ -187,5 +209,34 @@ func TestBotAllowlistDeniesNonAllowedCallbackUser(t *testing.T) {
 	}
 	if got := api.callbackTexts[len(api.callbackTexts)-1]; got != "Access denied." {
 		t.Fatalf("expected access denied callback, got %q", got)
+	}
+}
+
+func TestBotCardAddBatchAIFlow(t *testing.T) {
+	t.Parallel()
+
+	h, api := newTestHandler(t)
+	ctx := context.Background()
+
+	if err := h.handleUpdate(ctx, tgbotapi.Update{Message: commandMessage(100, 42, "/deck_create EN RU basics", "deck_create")}); err != nil {
+		t.Fatalf("deck_create: %v", err)
+	}
+
+	payload := "/card_add_batch_ai 1\nbanished\nbanished\nwill fail\nempty back"
+	if err := h.handleUpdate(ctx, tgbotapi.Update{Message: commandMessage(100, 42, payload, "card_add_batch_ai")}); err != nil {
+		t.Fatalf("card_add_batch_ai: %v", err)
+	}
+	if len(api.sentTexts) == 0 {
+		t.Fatal("expected batch summary response")
+	}
+	last := api.sentTexts[len(api.sentTexts)-1]
+	if !strings.Contains(last, "Batch summary:") {
+		t.Fatalf("expected batch summary in response, got %q", last)
+	}
+	if !strings.Contains(last, "skipped_duplicates=1") {
+		t.Fatalf("expected duplicate count in summary, got %q", last)
+	}
+	if !strings.Contains(last, "failed=2") {
+		t.Fatalf("expected failure count in summary, got %q", last)
 	}
 }
