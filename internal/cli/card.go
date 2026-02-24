@@ -4,8 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
+	"word-learning-cli/internal/ai"
 	"word-learning-cli/internal/app"
 )
 
@@ -22,8 +25,80 @@ func newCardCmd(ctx *commandContext) *cobra.Command {
 	cardCmd.AddCommand(newCardGetCmd(ctx))
 	cardCmd.AddCommand(newCardRememberCmd(ctx))
 	cardCmd.AddCommand(newCardDontRememberCmd(ctx))
+	cardCmd.AddCommand(newCardAddBatchAICmd(ctx))
 
 	return cardCmd
+}
+
+func newCardAddBatchAICmd(ctx *commandContext) *cobra.Command {
+	var deckID int64
+	var fromFile string
+	var fromStdin bool
+	var dryRun bool
+
+	cmd := &cobra.Command{
+		Use:   "add-batch-ai",
+		Short: "Add multiple cards with AI-generated fields",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if deckID <= 0 {
+				return fmt.Errorf("--deck must be a positive integer")
+			}
+			if (fromFile == "" && !fromStdin) || (fromFile != "" && fromStdin) {
+				return fmt.Errorf("exactly one input source is required: --from-file or --stdin")
+			}
+
+			var data []byte
+			var err error
+			if fromFile != "" {
+				data, err = os.ReadFile(fromFile)
+				if err != nil {
+					return fmt.Errorf("read --from-file: %w", err)
+				}
+			} else {
+				data, err = os.ReadFile("/dev/stdin")
+				if err != nil {
+					return fmt.Errorf("read --stdin: %w", err)
+				}
+			}
+
+			generator, err := ai.NewGeneratorFromEnv()
+			if err != nil {
+				return err
+			}
+			service := app.NewService(ctx.Store)
+			report, err := service.AddCardsBatchAIToDeck(context.Background(), generator, app.BatchAddAIParams{
+				DeckID: deckID,
+				Lines:  strings.Split(string(data), "\n"),
+				Mode:   app.BatchModeCLI,
+				DryRun: dryRun,
+			})
+			if err != nil {
+				return err
+			}
+
+			for _, item := range report.Items {
+				reasonSuffix := ""
+				if strings.TrimSpace(item.Reason) != "" {
+					reasonSuffix = " (" + item.Reason + ")"
+				}
+				fmt.Printf("- %s => %s%s\n", item.FrontNormalized, item.Status, reasonSuffix)
+			}
+			fmt.Printf("Summary: total=%d created=%d skipped_duplicates=%d failed=%d\n",
+				report.Summary.Total,
+				report.Summary.Created,
+				report.Summary.SkippedDuplicates,
+				report.Summary.Failed,
+			)
+			return nil
+		},
+	}
+
+	cmd.Flags().Int64Var(&deckID, "deck", 0, "Deck ID")
+	cmd.Flags().StringVar(&fromFile, "from-file", "", "Path to file with one front per line")
+	cmd.Flags().BoolVar(&fromStdin, "stdin", false, "Read fronts from stdin")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Generate and validate only, do not write to DB")
+	_ = cmd.MarkFlagRequired("deck")
+	return cmd
 }
 
 func newCardAddCmd(ctx *commandContext) *cobra.Command {
@@ -38,7 +113,7 @@ func newCardAddCmd(ctx *commandContext) *cobra.Command {
 		Short: "Add a card",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			service := app.NewService(ctx.Store)
-			card, err := service.AddCard(context.Background(), deckID, front, back, pronunciation, description)
+			card, err := service.AddCardToDeck(context.Background(), deckID, front, back, pronunciation, description)
 			if err != nil {
 				return err
 			}
@@ -68,7 +143,7 @@ func newCardListCmd(ctx *commandContext) *cobra.Command {
 		Short: "List cards",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			service := app.NewService(ctx.Store)
-			cards, err := service.ListCards(context.Background(), deckID, status)
+			cards, err := service.ListCardsInDeck(context.Background(), deckID, status)
 			if err != nil {
 				return err
 			}
@@ -92,7 +167,7 @@ func newCardRemoveCmd(ctx *commandContext) *cobra.Command {
 		Short: "Soft-remove a card from active rotation",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			service := app.NewService(ctx.Store)
-			if err := service.RemoveCard(context.Background(), cardID); err != nil {
+			if err := service.RemoveCardByID(context.Background(), cardID); err != nil {
 				if errors.Is(err, app.ErrCardNotFound) {
 					return fmt.Errorf("card %d not found", cardID)
 				}
@@ -116,7 +191,7 @@ func newCardRestoreCmd(ctx *commandContext) *cobra.Command {
 		Short: "Restore a removed card to active status",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			service := app.NewService(ctx.Store)
-			if err := service.RestoreCard(context.Background(), cardID); err != nil {
+			if err := service.RestoreCardByID(context.Background(), cardID); err != nil {
 				if errors.Is(err, app.ErrCardNotFound) {
 					return fmt.Errorf("card %d not found", cardID)
 				}
@@ -140,7 +215,7 @@ func newCardGetCmd(ctx *commandContext) *cobra.Command {
 		Short: "Get next available card for a deck",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			service := app.NewService(ctx.Store)
-			card, stats, err := service.NextCardWithStats(context.Background(), deckID)
+			card, stats, err := service.NextCardWithStatsInDeck(context.Background(), deckID)
 			if err != nil {
 				return err
 			}
@@ -167,7 +242,7 @@ func newCardRememberCmd(ctx *commandContext) *cobra.Command {
 		Short: "Increase next review interval",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			service := app.NewService(ctx.Store)
-			if err := service.RememberCard(context.Background(), cardID); err != nil {
+			if err := service.RememberCardByID(context.Background(), cardID); err != nil {
 				if errors.Is(err, app.ErrCardNotFound) {
 					return fmt.Errorf("card %d not found", cardID)
 				}
@@ -191,7 +266,7 @@ func newCardDontRememberCmd(ctx *commandContext) *cobra.Command {
 		Short: "Schedule short retry interval",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			service := app.NewService(ctx.Store)
-			if err := service.DontRememberCard(context.Background(), cardID); err != nil {
+			if err := service.DontRememberCardByID(context.Background(), cardID); err != nil {
 				if errors.Is(err, app.ErrCardNotFound) {
 					return fmt.Errorf("card %d not found", cardID)
 				}

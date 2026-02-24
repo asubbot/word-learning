@@ -4,13 +4,14 @@ A Go CLI tool for learning foreign words with flashcards.
 
 ## MVP Features
 
-- Deck management: create and list.
-- Card management: add, list, remove, restore.
+- Deck management: create and list (all decks: CLI and bot-created).
+- Card management: add, list, remove, restore; works with any deck by ID (including decks created in the Telegram bot).
 - CLI practice mode:
   - `card get` - fetch the next available card.
   - `card remember` - increase interval before next review (due-date scheduler).
   - `card dont-remember` - schedule a short retry (10 minutes).
 - Reliable local storage in SQLite.
+- Single DB: CLI and bot share one database; `deck list` shows all decks; card commands accept any deck ID from the list.
 
 ## Requirements
 
@@ -58,12 +59,13 @@ go run ./cmd/wordcli card dont-remember --id 1
 
 ### Deck
 
-- `deck create <from> <to> <name...>`
-- `deck list`
+- `deck create <from> <to> <name...>` — create a deck (owner = CLI, id 0).
+- `deck list` — list **all** decks (CLI + bot), with columns: ID, OWNER, FROM, TO, NAME (OWNER 0 = CLI, non-zero = Telegram user ID).
 
 ### Card
 
 - `card add --deck --front --back [--pronunciation] [--description]`
+- `card add-batch-ai --deck --from-file|--stdin [--dry-run]`
 - `card list --deck [--status active|removed]`
 - `card get --deck`
 - `card remember --id`
@@ -84,27 +86,33 @@ go run ./cmd/wordcli card dont-remember --id 1
   - `<from>` and `<to>` accept language codes with 2-8 latin letters (e.g. `EN`, `RU`);
   - source and target languages must be different.
 - `deck list`
-  - prints all existing decks.
+  - prints all decks (created from CLI and from the Telegram bot). Columns: ID, OWNER, FROM, TO, NAME. Use any ID with `card add`, `card list`, `card get`, `add-batch-ai` etc.
 
 ### Card
 
 - `card add --deck <deck_id> --front "<text>" --back "<text>" [--pronunciation "<text>"] [--description "<text>"]`
-  - adds a card to the selected deck;
-  - `--pronunciation` optionally stores transcription/pronunciation help.
+  - adds a card to the selected deck (any deck ID from `deck list`, including bot-created decks);
+  - `--pronunciation` optionally stores transcription/pronunciation help (e.g. IPA).
+- `card add-batch-ai --deck <deck_id> (--from-file <path> | --stdin) [--dry-run]`
+  - reads one front per line and asks AI to generate `back`, `pronunciation` (IPA), `description` (usage example in source language);
+  - works with any deck ID from `deck list`;
+  - applies normalization: trim, skip empty lines, skip `#` comment lines;
+  - prints per-item result and deterministic summary counters;
+  - `--dry-run` generates/validates only and does not persist cards.
 - `card list --deck <deck_id> [--status active|removed]`
-  - prints deck cards;
+  - prints deck cards (any deck ID from `deck list`);
   - with `--status`, filters cards by status.
 - `card get --deck <deck_id>`
-  - prints the next available card for review;
+  - prints the next available card for review (any deck ID);
   - returns only due cards (`next_due_at <= now`);
   - excludes `removed` cards;
   - prints summary line after the card: `Active X, postponed Y, total Z`.
 - `card remember --id <card_id>`
-  - increases review interval and schedules the card into the future (`next_due_at`).
+  - increases review interval and schedules the card into the future (`next_due_at`); works for any card in any deck.
 - `card dont-remember --id <card_id>`
   - reduces interval and schedules a short retry in 10 minutes.
 - `card remove --id <card_id>`
-  - soft-removes a card from active rotation (`status=removed`).
+  - soft-removes a card from active rotation (`status=removed`); works for any card in any deck.
 - `card restore --id <card_id>`
   - restores a card to `active` status.
 
@@ -113,6 +121,11 @@ go run ./cmd/wordcli card dont-remember --id 1
 DB path is taken from:
 1. `WORDLEARN_DB_PATH` environment variable
 2. if it is not set, process exits with an error
+
+Use the **same** `WORDLEARN_DB_PATH` for both CLI and the Telegram bot so they share one database. Then:
+- `deck list` shows all decks (CLI-created and bot-created);
+- any deck ID from the list can be used in `card add`, `card list`, `card get`, `card add-batch-ai`, etc.;
+- card operations by `--id` (remove, restore, remember, dont-remember) work for any card in any deck.
 
 Examples:
 
@@ -153,6 +166,11 @@ The project also includes a Telegram bot binary that reuses the same app/storage
 - `WORDLEARN_DB_PATH` - SQLite DB path (required).
 - `TELEGRAM_POLLING_TIMEOUT` - long-poll timeout in seconds (optional, default: `30`).
 - `BOT_ALLOWED_USER_IDS` - optional comma-separated allowlist of Telegram user IDs.
+- `OPENAI_API_KEY` - required for AI batch add flows.
+- `OPENAI_BASE_URL` - optional API base URL (default: `https://api.openai.com/v1`).
+- `OPENAI_MODEL` - optional model name (default: `gpt-4o-mini`).
+- `OPENAI_TIMEOUT_SEC` - optional HTTP timeout in seconds (default: `30`).
+- `OPENAI_MAX_RETRIES` - optional retry count for retryable API failures (default: `2`).
 
 ### Start bot
 
@@ -170,6 +188,7 @@ go run ./cmd/wordbot
 - `/deck_create <from> <to> <name...>` - create deck.
 - `/deck_list` - list your decks.
 - `/card_add <deck_id> | <front> | <back> | <pronunciation> | <description>` - add card.
+- `/card_add_batch_ai <deck_id>` + newline-separated fronts - add cards via AI.
 - `/next <deck_id>` - show next due card with inline actions.
 
 ### Inline actions in `/next`
@@ -184,7 +203,7 @@ Back side is rendered in Telegram spoiler format.
 
 - Run `wordbot` as a long-lived process (systemd, Docker, or any process manager).
 - Keep `TELEGRAM_BOT_TOKEN` in environment or secrets manager.
-- CLI and bot can share one DB file, but production setups should prefer a stable volume path and regular backups.
+- CLI and bot can share one DB file: set the same `WORDLEARN_DB_PATH` for both. From CLI you can then manage all decks: `deck list` shows every deck (OWNER 0 = CLI, other = Telegram user ID), and all card commands accept any deck/card ID. Prefer a stable volume path and regular backups in production.
 
 ## Shell Completion (Cobra)
 
@@ -296,6 +315,54 @@ Use one Telegram user and execute:
 7. Press `Don't remember` on the next due card
 8. Press `Remove`
 9. `/next 1` (expect no active card until restore/new card)
+
+## Batch AI E2E Checklist
+
+### CLI from file
+
+```bash
+cat > ./words.txt <<'EOF'
+# comments are ignored in CLI mode
+banished
+crack down on sth
+
+come up with
+EOF
+
+export OPENAI_API_KEY="<your_api_key>"
+export WORDLEARN_DB_PATH=./e2e.db
+go run ./cmd/wordcli card add-batch-ai --deck 1 --from-file ./words.txt
+```
+
+Expected:
+- per-item status lines are printed;
+- summary line is printed as:
+  - `Summary: total=X created=Y skipped_duplicates=Z failed=W`.
+
+### CLI stdin + dry-run
+
+```bash
+printf "banished\ncome up with\n" | go run ./cmd/wordcli card add-batch-ai --deck 1 --stdin --dry-run
+```
+
+Expected:
+- summary shows created candidates;
+- DB is unchanged (verify with `card list`).
+
+### Telegram bot multiline batch
+
+Send one message:
+
+```text
+/card_add_batch_ai 1
+banished
+crack down on sth
+come up with
+```
+
+Expected:
+- bot returns deterministic summary counters (`total/created/skipped_duplicates/failed`);
+- rerunning the same payload increases `skipped_duplicates`.
 
 ## Telegram Verification Checklist
 

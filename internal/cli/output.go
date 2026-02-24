@@ -17,6 +17,26 @@ func printDecks(decks []domain.Deck) {
 	}
 }
 
+func printDecksAll(decks []domain.Deck) {
+	if len(decks) == 0 {
+		fmt.Println("No decks yet.")
+		return
+	}
+
+	const ownerWidth = 22 // fits "Telegram (188037393)"
+	fmt.Printf("%-4s%-*s%s\t%s\t%s\n", "ID", ownerWidth, "OWNER", "FROM", "TO", "NAME")
+	for _, deck := range decks {
+		fmt.Printf("%-4d%-*s%s\t%s\t%s\n", deck.ID, ownerWidth, formatDeckOwner(deck.TelegramUserID), deck.LanguageFrom, deck.LanguageTo, deck.Name)
+	}
+}
+
+func formatDeckOwner(telegramUserID int64) string {
+	if telegramUserID == 0 {
+		return "CLI"
+	}
+	return fmt.Sprintf("Telegram (%d)", telegramUserID)
+}
+
 func printCards(cards []domain.Card) {
 	if len(cards) == 0 {
 		fmt.Println("No cards found.")

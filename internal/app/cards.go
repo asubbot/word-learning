@@ -25,6 +25,17 @@ func (s *Service) AddCard(ctx context.Context, deckID int64, front, back, pronun
 	return s.AddCardForUser(ctx, 0, deckID, front, back, pronunciation, description)
 }
 
+func (s *Service) AddCardToDeck(ctx context.Context, deckID int64, front, back, pronunciation, description string) (domain.Card, error) {
+	deck, err := s.store.GetDeckByID(ctx, deckID)
+	if err != nil {
+		return domain.Card{}, err
+	}
+	if deck == nil {
+		return domain.Card{}, fmt.Errorf("deck %d does not exist", deckID)
+	}
+	return s.AddCardForUser(ctx, deck.TelegramUserID, deckID, front, back, pronunciation, description)
+}
+
 func (s *Service) AddCardForUser(ctx context.Context, telegramUserID, deckID int64, front, back, pronunciation, description string) (domain.Card, error) {
 	if deckID <= 0 {
 		return domain.Card{}, fmt.Errorf("--deck must be a positive integer")
@@ -87,8 +98,102 @@ func (s *Service) ListCardsForUser(ctx context.Context, telegramUserID, deckID i
 	return s.store.ListCardsForOwner(ctx, deckID, telegramUserID, statusPtr)
 }
 
+func (s *Service) ListCardsInDeck(ctx context.Context, deckID int64, status string) ([]domain.Card, error) {
+	deck, err := s.store.GetDeckByID(ctx, deckID)
+	if err != nil {
+		return nil, err
+	}
+	if deck == nil {
+		return nil, fmt.Errorf("deck %d does not exist", deckID)
+	}
+	return s.ListCardsForUser(ctx, deck.TelegramUserID, deckID, status)
+}
+
 func (s *Service) RemoveCard(ctx context.Context, cardID int64) error {
 	return s.RemoveCardForUser(ctx, 0, cardID)
+}
+
+func (s *Service) RemoveCardByID(ctx context.Context, cardID int64) error {
+	card, err := s.store.GetCardByID(ctx, cardID)
+	if err != nil {
+		return err
+	}
+	if card == nil {
+		return ErrCardNotFound
+	}
+	deck, err := s.store.GetDeckByID(ctx, card.DeckID)
+	if err != nil {
+		return err
+	}
+	if deck == nil {
+		return fmt.Errorf("deck %d not found", card.DeckID)
+	}
+	return s.RemoveCardForUser(ctx, deck.TelegramUserID, cardID)
+}
+
+func (s *Service) RestoreCardByID(ctx context.Context, cardID int64) error {
+	card, err := s.store.GetCardByID(ctx, cardID)
+	if err != nil {
+		return err
+	}
+	if card == nil {
+		return ErrCardNotFound
+	}
+	deck, err := s.store.GetDeckByID(ctx, card.DeckID)
+	if err != nil {
+		return err
+	}
+	if deck == nil {
+		return fmt.Errorf("deck %d not found", card.DeckID)
+	}
+	return s.RestoreCardForUser(ctx, deck.TelegramUserID, cardID)
+}
+
+func (s *Service) RememberCardByID(ctx context.Context, cardID int64) error {
+	card, err := s.store.GetCardByID(ctx, cardID)
+	if err != nil {
+		return err
+	}
+	if card == nil {
+		return ErrCardNotFound
+	}
+	deck, err := s.store.GetDeckByID(ctx, card.DeckID)
+	if err != nil {
+		return err
+	}
+	if deck == nil {
+		return fmt.Errorf("deck %d not found", card.DeckID)
+	}
+	return s.RememberCardForUser(ctx, deck.TelegramUserID, cardID)
+}
+
+func (s *Service) DontRememberCardByID(ctx context.Context, cardID int64) error {
+	card, err := s.store.GetCardByID(ctx, cardID)
+	if err != nil {
+		return err
+	}
+	if card == nil {
+		return ErrCardNotFound
+	}
+	deck, err := s.store.GetDeckByID(ctx, card.DeckID)
+	if err != nil {
+		return err
+	}
+	if deck == nil {
+		return fmt.Errorf("deck %d not found", card.DeckID)
+	}
+	return s.DontRememberCardForUser(ctx, deck.TelegramUserID, cardID)
+}
+
+func (s *Service) NextCardWithStatsInDeck(ctx context.Context, deckID int64) (*domain.Card, DeckStats, error) {
+	deck, err := s.store.GetDeckByID(ctx, deckID)
+	if err != nil {
+		return nil, DeckStats{}, err
+	}
+	if deck == nil {
+		return nil, DeckStats{}, fmt.Errorf("deck %d does not exist", deckID)
+	}
+	return s.NextCardWithStatsForUser(ctx, deck.TelegramUserID, deckID)
 }
 
 func (s *Service) RemoveCardForUser(ctx context.Context, telegramUserID, cardID int64) error {

@@ -47,14 +47,14 @@ func newDeckCreateCmd(ctx *commandContext) *cobra.Command {
 func newDeckListCmd(ctx *commandContext) *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
-		Short: "List decks",
+		Short: "List all decks (CLI and bot-created)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			service := app.NewService(ctx.Store)
-			decks, err := service.ListDecks(context.Background())
+			decks, err := service.ListDecksAll(context.Background())
 			if err != nil {
 				return err
 			}
-			printDecks(decks)
+			printDecksAll(decks)
 			return nil
 		},
 	}

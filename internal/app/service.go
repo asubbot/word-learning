@@ -54,6 +54,14 @@ func (s *Service) ListDecksForUser(ctx context.Context, telegramUserID int64) ([
 	return s.store.ListDecksForOwner(ctx, telegramUserID)
 }
 
+func (s *Service) ListDecksAll(ctx context.Context) ([]domain.Deck, error) {
+	return s.store.ListDecksAll(ctx)
+}
+
+func (s *Service) GetDeckByID(ctx context.Context, deckID int64) (*domain.Deck, error) {
+	return s.store.GetDeckByID(ctx, deckID)
+}
+
 func normalizeLanguageCode(value string) (string, error) {
 	trimmed := strings.TrimSpace(value)
 	if !languageCodePattern.MatchString(trimmed) {
