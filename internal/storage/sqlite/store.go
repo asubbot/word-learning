@@ -20,6 +20,13 @@ CREATE TABLE IF NOT EXISTS decks (
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS active_decks (
+  user_id INTEGER PRIMARY KEY,
+  deck_id INTEGER NOT NULL,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY(deck_id) REFERENCES decks(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS cards (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   deck_id INTEGER NOT NULL,
@@ -43,6 +50,7 @@ CREATE INDEX IF NOT EXISTS idx_cards_deck_id ON cards(deck_id);
 CREATE INDEX IF NOT EXISTS idx_cards_status ON cards(status);
 CREATE INDEX IF NOT EXISTS idx_cards_deck_status ON cards(deck_id, status);
 CREATE INDEX IF NOT EXISTS idx_decks_owner_id ON decks(telegram_user_id, id);
+CREATE INDEX IF NOT EXISTS idx_active_decks_deck_id ON active_decks(deck_id);
 `
 
 type Store struct {

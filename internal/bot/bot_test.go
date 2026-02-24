@@ -113,15 +113,18 @@ func TestBotCommandDeckAndCardFlow(t *testing.T) {
 	if len(api.sentTexts) == 0 || !strings.Contains(api.sentTexts[len(api.sentTexts)-1], "Deck created") {
 		t.Fatalf("expected deck create confirmation, got %#v", api.sentTexts)
 	}
+	if err := h.handleUpdate(ctx, tgbotapi.Update{Message: commandMessage(100, 42, "/deck_use English Basics", "deck_use")}); err != nil {
+		t.Fatalf("deck_use: %v", err)
+	}
 
-	if err := h.handleUpdate(ctx, tgbotapi.Update{Message: commandMessage(100, 42, "/card_add 1 | banished | изгнанный | /banished/ | sample", "card_add")}); err != nil {
+	if err := h.handleUpdate(ctx, tgbotapi.Update{Message: commandMessage(100, 42, "/card_add banished | изгнанный | /banished/ | sample", "card_add")}); err != nil {
 		t.Fatalf("card_add: %v", err)
 	}
 	if !strings.Contains(api.sentTexts[len(api.sentTexts)-1], "Card created") {
 		t.Fatalf("expected card create confirmation, got %q", api.sentTexts[len(api.sentTexts)-1])
 	}
 
-	if err := h.handleUpdate(ctx, tgbotapi.Update{Message: commandMessage(100, 42, "/next 1", "next")}); err != nil {
+	if err := h.handleUpdate(ctx, tgbotapi.Update{Message: commandMessage(100, 42, "/next", "next")}); err != nil {
 		t.Fatalf("next: %v", err)
 	}
 	last := api.sentConfigs[len(api.sentConfigs)-1]
@@ -222,8 +225,11 @@ func TestBotCardAddBatchAIFlow(t *testing.T) {
 	if err := h.handleUpdate(ctx, tgbotapi.Update{Message: commandMessage(100, 42, "/deck_create EN RU basics", "deck_create")}); err != nil {
 		t.Fatalf("deck_create: %v", err)
 	}
+	if err := h.handleUpdate(ctx, tgbotapi.Update{Message: commandMessage(100, 42, "/deck_use basics", "deck_use")}); err != nil {
+		t.Fatalf("deck_use: %v", err)
+	}
 
-	payload := "/card_add_batch_ai 1\nbanished\nbanished\nwill fail\nempty back"
+	payload := "/card_add_batch_ai banished\nbanished\nwill fail\nempty back"
 	if err := h.handleUpdate(ctx, tgbotapi.Update{Message: commandMessage(100, 42, payload, "card_add_batch_ai")}); err != nil {
 		t.Fatalf("card_add_batch_ai: %v", err)
 	}

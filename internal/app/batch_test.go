@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -305,5 +306,43 @@ func TestAddCardsBatchAIToDeck_DeckNotFound(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "99999") || !strings.Contains(err.Error(), "does not exist") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestAddCardsBatchAIForActiveDeckForUser(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+
+	generator := fakeGenerator{
+		generate: func(req ai.GenerateCardRequest) (ai.GeneratedCard, error) {
+			return ai.GeneratedCard{
+				Back:          "translated-" + req.Front,
+				Pronunciation: "/p/",
+				Example:       "ex",
+				Conjugation:   "",
+			}, nil
+		},
+	}
+
+	if _, err := svc.AddCardsBatchAIForActiveDeckForUser(ctx, 101, generator, []string{"a"}, BatchModeCLI, false); !errors.Is(err, ErrActiveDeckNotSet) {
+		t.Fatalf("expected ErrActiveDeckNotSet, got %v", err)
+	}
+
+	deck, err := svc.CreateDeckForUser(ctx, 101, "Active Batch", "EN", "RU")
+	if err != nil {
+		t.Fatalf("CreateDeckForUser: %v", err)
+	}
+	if _, err := svc.DeckUseForUser(ctx, 101, deck.Name); err != nil {
+		t.Fatalf("DeckUseForUser: %v", err)
+	}
+
+	report, err := svc.AddCardsBatchAIForActiveDeckForUser(ctx, 101, generator, []string{"banished", "come up with"}, BatchModeCLI, false)
+	if err != nil {
+		t.Fatalf("AddCardsBatchAIForActiveDeckForUser: %v", err)
+	}
+	if report.Summary.Created != 2 || report.Summary.Failed != 0 {
+		t.Fatalf("unexpected summary: %#v", report.Summary)
 	}
 }

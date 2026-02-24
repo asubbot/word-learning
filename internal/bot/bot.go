@@ -152,6 +152,8 @@ func (h *handler) handleCommand(ctx context.Context, msg *tgbotapi.Message) erro
 		"whoami":            h.handleWhoAmICommand,
 		"deck_create":       h.handleDeckCreateCommand,
 		"deck_list":         h.handleDeckListCommand,
+		"deck_use":          h.handleDeckUseCommand,
+		"deck_current":      h.handleDeckCurrentCommand,
 		"card_add":          h.handleCardAddCommand,
 		"card_add_batch_ai": h.handleCardAddBatchAICommand,
 		"next":              h.handleNextCommand,
@@ -182,7 +184,7 @@ func (h *handler) handleCallback(ctx context.Context, cb *tgbotapi.CallbackQuery
 	if err := h.answerCallback(target.callbackID, "Done"); err != nil {
 		h.log.Warn("answer callback", "error", err)
 	}
-	return h.sendNextCard(ctx, target.chatID, target.userID, target.deckID)
+	return h.sendNextCard(ctx, target.chatID, target.userID)
 }
 
 func (h *handler) resolveCallbackTarget(ctx context.Context, cb *tgbotapi.CallbackQuery) (callbackTarget, bool) {
@@ -285,20 +287,60 @@ func (h *handler) handleDeckListCommand(ctx context.Context, msg *tgbotapi.Messa
 	return h.sendText(msg.Chat.ID, strings.TrimSpace(b.String()))
 }
 
+func (h *handler) handleDeckUseCommand(ctx context.Context, msg *tgbotapi.Message, userID int64) error {
+	name := strings.TrimSpace(msg.CommandArguments())
+	if name == "" {
+		return h.sendText(msg.Chat.ID, "usage: /deck_use <name...>")
+	}
+	result, err := h.service.DeckUseForUser(ctx, userID, name)
+	if err != nil {
+		if errors.Is(err, app.ErrDeckNameAmbiguous) {
+			if len(result.Candidates) == 0 {
+				return h.sendText(msg.Chat.ID, "Deck name is ambiguous. Please use exact deck name.")
+			}
+			var b strings.Builder
+			b.WriteString("Deck name is ambiguous. Candidates:\n")
+			for _, d := range result.Candidates {
+				fmt.Fprintf(&b, "- %s (%s->%s)\n", d.Name, d.LanguageFrom, d.LanguageTo)
+			}
+			return h.sendText(msg.Chat.ID, strings.TrimSpace(b.String()))
+		}
+		return h.sendText(msg.Chat.ID, err.Error())
+	}
+	if result.Deck == nil {
+		return h.sendText(msg.Chat.ID, "Failed to set active deck.")
+	}
+	return h.sendText(msg.Chat.ID, fmt.Sprintf("Active deck: %s (%s->%s)", result.Deck.Name, result.Deck.LanguageFrom, result.Deck.LanguageTo))
+}
+
+func (h *handler) handleDeckCurrentCommand(ctx context.Context, msg *tgbotapi.Message, userID int64) error {
+	deck, err := h.service.DeckCurrentForUser(ctx, userID)
+	if err != nil {
+		return h.sendText(msg.Chat.ID, fmt.Sprintf("Failed to resolve active deck: %v", err))
+	}
+	if deck == nil {
+		return h.sendText(msg.Chat.ID, "Active deck is not set. Use /deck_use <name...>.")
+	}
+	return h.sendText(msg.Chat.ID, fmt.Sprintf("Active deck: %s (%s->%s)", deck.Name, deck.LanguageFrom, deck.LanguageTo))
+}
+
 func (h *handler) handleCardAddCommand(ctx context.Context, msg *tgbotapi.Message, userID int64) error {
-	deckID, front, back, pronunciation, example, conjugation, err := parseCardAddArgs(msg.CommandArguments())
+	front, back, pronunciation, example, conjugation, err := parseCardAddArgs(msg.CommandArguments())
 	if err != nil {
 		return h.sendText(msg.Chat.ID, err.Error())
 	}
-	card, err := h.service.AddCardForUser(ctx, userID, deckID, front, back, pronunciation, example, conjugation)
+	card, err := h.service.AddCardForActiveDeckForUser(ctx, userID, front, back, pronunciation, example, conjugation)
 	if err != nil {
+		if errors.Is(err, app.ErrActiveDeckNotSet) {
+			return h.sendText(msg.Chat.ID, "Active deck is not set. Use /deck_use <name...>.")
+		}
 		return h.sendText(msg.Chat.ID, fmt.Sprintf("Failed to add card: %v", err))
 	}
 	return h.sendText(msg.Chat.ID, fmt.Sprintf("Card created: id=%d deck=%d", card.ID, card.DeckID))
 }
 
 func (h *handler) handleCardAddBatchAICommand(ctx context.Context, msg *tgbotapi.Message, userID int64) error {
-	deckID, lines, err := parseCardAddBatchAIArgs(msg.CommandArguments())
+	lines, err := parseCardAddBatchAIArgs(msg.CommandArguments())
 	if err != nil {
 		return h.sendText(msg.Chat.ID, err.Error())
 	}
@@ -306,13 +348,11 @@ func (h *handler) handleCardAddBatchAICommand(ctx context.Context, msg *tgbotapi
 	if err != nil {
 		return h.sendText(msg.Chat.ID, fmt.Sprintf("Failed to configure AI: %v", err))
 	}
-	report, err := h.service.AddCardsBatchAIForUser(ctx, userID, generator, app.BatchAddAIParams{
-		DeckID: deckID,
-		Lines:  lines,
-		Mode:   app.BatchModeBot,
-		DryRun: false,
-	})
+	report, err := h.service.AddCardsBatchAIForActiveDeckForUser(ctx, userID, generator, lines, app.BatchModeBot, false)
 	if err != nil {
+		if errors.Is(err, app.ErrActiveDeckNotSet) {
+			return h.sendText(msg.Chat.ID, "Active deck is not set. Use /deck_use <name...>.")
+		}
 		return h.sendText(msg.Chat.ID, fmt.Sprintf("Failed to add cards in batch: %v", err))
 	}
 	var b strings.Builder
@@ -336,16 +376,15 @@ func (h *handler) handleCardAddBatchAICommand(ctx context.Context, msg *tgbotapi
 }
 
 func (h *handler) handleNextCommand(ctx context.Context, msg *tgbotapi.Message, userID int64) error {
-	deckID, err := parseDeckIDArg(msg.CommandArguments())
-	if err != nil {
-		return h.sendText(msg.Chat.ID, err.Error())
-	}
-	return h.sendNextCard(ctx, msg.Chat.ID, userID, deckID)
+	return h.sendNextCard(ctx, msg.Chat.ID, userID)
 }
 
-func (h *handler) sendNextCard(ctx context.Context, chatID int64, userID int64, deckID int64) error {
-	card, stats, err := h.service.NextCardWithStatsForUser(ctx, userID, deckID)
+func (h *handler) sendNextCard(ctx context.Context, chatID int64, userID int64) error {
+	card, stats, err := h.service.NextCardWithStatsForActiveDeckForUser(ctx, userID)
 	if err != nil {
+		if errors.Is(err, app.ErrActiveDeckNotSet) {
+			return h.sendText(chatID, "Active deck is not set. Use /deck_use <name...>.")
+		}
 		return h.sendText(chatID, fmt.Sprintf("Failed to fetch next card: %v", err))
 	}
 	if card == nil {
@@ -354,7 +393,7 @@ func (h *handler) sendNextCard(ctx context.Context, chatID int64, userID int64, 
 
 	msg := tgbotapi.NewMessage(chatID, renderCardMessage(*card, stats))
 	msg.ParseMode = "HTML"
-	msg.ReplyMarkup = actionKeyboard(card.ID, deckID)
+	msg.ReplyMarkup = actionKeyboard(card.ID, card.DeckID)
 	_, err = h.sendWithRetry(msg)
 	return err
 }
@@ -441,9 +480,11 @@ func helpMessage() string {
 /whoami - show your Telegram user ID
 /deck_create <from> <to> <name...> - create deck
 /deck_list - list your decks
-/card_add <deck_id> | <front> | <back> | <pronunciation> | <example> | <conjugation> - add card
-/card_add_batch_ai <deck_id> then newline-separated fronts - add cards via AI
-/next <deck_id> - show next due card with action buttons`) // raw user-visible text
+/deck_use <name...> - set active deck by exact name
+/deck_current - show active deck
+/card_add <front> | <back> | <pronunciation> | <example> | <conjugation> - add card to active deck
+/card_add_batch_ai then newline-separated fronts - add cards via AI to active deck
+/next - show next due card from active deck with action buttons`) // raw user-visible text
 }
 
 func parseDeckCreateArgs(args string) (string, string, string, error) {
@@ -457,63 +498,39 @@ func parseDeckCreateArgs(args string) (string, string, string, error) {
 	return name, languageFrom, languageTo, nil
 }
 
-func parseDeckIDArg(args string) (int64, error) {
-	value := strings.TrimSpace(args)
-	if value == "" {
-		return 0, fmt.Errorf("usage: /next <deck_id>")
-	}
-	id, err := strconv.ParseInt(value, 10, 64)
-	if err != nil || id <= 0 {
-		return 0, fmt.Errorf("deck_id must be a positive integer")
-	}
-	return id, nil
-}
-
-func parseCardAddArgs(args string) (int64, string, string, string, string, string, error) {
+func parseCardAddArgs(args string) (string, string, string, string, string, error) {
 	segments := strings.Split(args, "|")
 	for i := range segments {
 		segments[i] = strings.TrimSpace(segments[i])
 	}
-	if len(segments) < 3 {
-		return 0, "", "", "", "", "", fmt.Errorf("usage: /card_add <deck_id> | <front> | <back> | <pronunciation> | <example> | <conjugation>")
+	if len(segments) < 2 {
+		return "", "", "", "", "", fmt.Errorf("usage: /card_add <front> | <back> | <pronunciation> | <example> | <conjugation>")
 	}
-	deckID, err := strconv.ParseInt(segments[0], 10, 64)
-	if err != nil || deckID <= 0 {
-		return 0, "", "", "", "", "", fmt.Errorf("deck_id must be a positive integer")
-	}
-	front := segments[1]
-	back := segments[2]
+	front := segments[0]
+	back := segments[1]
 	pronunciation := ""
 	example := ""
 	conjugation := ""
+	if len(segments) >= 3 {
+		pronunciation = segments[2]
+	}
 	if len(segments) >= 4 {
-		pronunciation = segments[3]
+		example = segments[3]
 	}
 	if len(segments) >= 5 {
-		example = segments[4]
+		conjugation = segments[4]
 	}
-	if len(segments) >= 6 {
-		conjugation = segments[5]
-	}
-	return deckID, front, back, pronunciation, example, conjugation, nil
+	return front, back, pronunciation, example, conjugation, nil
 }
 
-func parseCardAddBatchAIArgs(args string) (int64, []string, error) {
+func parseCardAddBatchAIArgs(args string) ([]string, error) {
 	normalized := strings.ReplaceAll(args, "\r\n", "\n")
 	normalized = strings.ReplaceAll(normalized, "\r", "\n")
 	normalized = strings.TrimSpace(normalized)
 	if normalized == "" {
-		return 0, nil, fmt.Errorf("usage: /card_add_batch_ai <deck_id> followed by newline-separated fronts")
+		return nil, fmt.Errorf("usage: /card_add_batch_ai followed by newline-separated fronts")
 	}
-	lines := strings.Split(normalized, "\n")
-	if len(lines) < 2 {
-		return 0, nil, fmt.Errorf("usage: /card_add_batch_ai <deck_id> followed by newline-separated fronts")
-	}
-	deckID, err := parsePositiveInt(strings.TrimSpace(lines[0]), "deck_id must be a positive integer")
-	if err != nil {
-		return 0, nil, err
-	}
-	return deckID, lines[1:], nil
+	return strings.Split(normalized, "\n"), nil
 }
 
 func actionKeyboard(cardID, deckID int64) tgbotapi.InlineKeyboardMarkup {

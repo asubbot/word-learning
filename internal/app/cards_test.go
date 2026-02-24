@@ -135,6 +135,91 @@ func TestGetDeckByID(t *testing.T) {
 	}
 }
 
+func TestDeckUseAndCurrentForUser(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+
+	if _, err := svc.DeckUseForUser(ctx, 101, "basic"); err == nil {
+		t.Fatal("expected not found for missing deck")
+	}
+
+	if _, err := svc.CreateDeckForUser(ctx, 101, "English Basics", "EN", "RU"); err != nil {
+		t.Fatalf("CreateDeckForUser #1: %v", err)
+	}
+	if _, err := svc.CreateDeckForUser(ctx, 101, "English Advanced", "EN", "DE"); err != nil {
+		t.Fatalf("CreateDeckForUser #2: %v", err)
+	}
+
+	_, err := svc.DeckUseForUser(ctx, 101, "English")
+	if !errors.Is(err, ErrDeckNameAmbiguous) {
+		t.Fatalf("expected ErrDeckNameAmbiguous, got %v", err)
+	}
+
+	useResult, err := svc.DeckUseForUser(ctx, 101, "English Basics")
+	if err != nil {
+		t.Fatalf("DeckUseForUser exact: %v", err)
+	}
+	if useResult.Deck == nil || useResult.Deck.Name != "English Basics" {
+		t.Fatalf("unexpected selected deck: %#v", useResult)
+	}
+
+	current, err := svc.DeckCurrentForUser(ctx, 101)
+	if err != nil {
+		t.Fatalf("DeckCurrentForUser: %v", err)
+	}
+	if current == nil || current.Name != "English Basics" {
+		t.Fatalf("unexpected current deck: %#v", current)
+	}
+}
+
+func TestActiveDeckCardFlow(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+
+	if _, err := svc.AddCardForActiveDeckForUser(ctx, 101, "word", "перевод", "", "", ""); !errors.Is(err, ErrActiveDeckNotSet) {
+		t.Fatalf("expected ErrActiveDeckNotSet, got %v", err)
+	}
+
+	deck, err := svc.CreateDeckForUser(ctx, 101, "Portuguese Verbs", "PT", "RU")
+	if err != nil {
+		t.Fatalf("CreateDeckForUser: %v", err)
+	}
+	if _, err := svc.DeckUseForUser(ctx, 101, deck.Name); err != nil {
+		t.Fatalf("DeckUseForUser: %v", err)
+	}
+
+	card, err := svc.AddCardForActiveDeckForUser(ctx, 101, "ir", "идти", "/iɾ/", "Eu vou agora.", "vou / vais / vai / vamos / vão")
+	if err != nil {
+		t.Fatalf("AddCardForActiveDeckForUser: %v", err)
+	}
+	if card.DeckID != deck.ID {
+		t.Fatalf("expected card deck %d, got %d", deck.ID, card.DeckID)
+	}
+
+	cards, err := svc.ListCardsForActiveDeckForUser(ctx, 101, "active")
+	if err != nil {
+		t.Fatalf("ListCardsForActiveDeckForUser: %v", err)
+	}
+	if len(cards) != 1 || cards[0].ID != card.ID {
+		t.Fatalf("unexpected cards for active deck: %#v", cards)
+	}
+
+	next, stats, err := svc.NextCardWithStatsForActiveDeckForUser(ctx, 101)
+	if err != nil {
+		t.Fatalf("NextCardWithStatsForActiveDeckForUser: %v", err)
+	}
+	if next == nil || next.ID != card.ID {
+		t.Fatalf("unexpected next card: %#v", next)
+	}
+	if stats.Total != 1 {
+		t.Fatalf("unexpected stats: %#v", stats)
+	}
+}
+
 func TestAddCardToDeck_AndListCardsInDeck(t *testing.T) {
 	t.Parallel()
 

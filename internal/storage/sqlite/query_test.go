@@ -344,3 +344,101 @@ func TestCardFrontExistsInDeckForOwner(t *testing.T) {
 		t.Fatal("did not expect owner2 to see owner1 card front")
 	}
 }
+
+func TestActiveDeckForUser(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	d1, err := store.CreateDeckForOwner(ctx, 101, "Deck One", "EN", "RU")
+	if err != nil {
+		t.Fatalf("CreateDeckForOwner d1: %v", err)
+	}
+	d2, err := store.CreateDeckForOwner(ctx, 101, "Deck Two", "EN", "DE")
+	if err != nil {
+		t.Fatalf("CreateDeckForOwner d2: %v", err)
+	}
+
+	if err := store.SetActiveDeckForUser(ctx, 101, d1.ID); err != nil {
+		t.Fatalf("SetActiveDeckForUser d1: %v", err)
+	}
+	got, err := store.GetActiveDeckForUser(ctx, 101)
+	if err != nil {
+		t.Fatalf("GetActiveDeckForUser d1: %v", err)
+	}
+	if got == nil || got.ID != d1.ID {
+		t.Fatalf("expected active deck %d, got %#v", d1.ID, got)
+	}
+
+	if err := store.SetActiveDeckForUser(ctx, 101, d2.ID); err != nil {
+		t.Fatalf("SetActiveDeckForUser d2: %v", err)
+	}
+	got, err = store.GetActiveDeckForUser(ctx, 101)
+	if err != nil {
+		t.Fatalf("GetActiveDeckForUser d2: %v", err)
+	}
+	if got == nil || got.ID != d2.ID {
+		t.Fatalf("expected active deck %d, got %#v", d2.ID, got)
+	}
+
+	if err := store.ClearActiveDeckForUser(ctx, 101); err != nil {
+		t.Fatalf("ClearActiveDeckForUser: %v", err)
+	}
+	got, err = store.GetActiveDeckForUser(ctx, 101)
+	if err != nil {
+		t.Fatalf("GetActiveDeckForUser cleared: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("expected nil active deck after clear, got %#v", got)
+	}
+}
+
+func TestFindDeckByNameForOwner(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	if _, err := store.CreateDeckForOwner(ctx, 101, "English Basics", "EN", "RU"); err != nil {
+		t.Fatalf("CreateDeckForOwner #1: %v", err)
+	}
+	if _, err := store.CreateDeckForOwner(ctx, 101, "English Advanced", "EN", "DE"); err != nil {
+		t.Fatalf("CreateDeckForOwner #2: %v", err)
+	}
+	if _, err := store.CreateDeckForOwner(ctx, 101, "Basic Portuguese", "PT", "RU"); err != nil {
+		t.Fatalf("CreateDeckForOwner #3: %v", err)
+	}
+	if _, err := store.CreateDeckForOwner(ctx, 202, "English Basics", "EN", "RU"); err != nil {
+		t.Fatalf("CreateDeckForOwner foreign: %v", err)
+	}
+
+	exact, err := store.FindDeckByExactNameForOwner(ctx, 101, " english basics ")
+	if err != nil {
+		t.Fatalf("FindDeckByExactNameForOwner: %v", err)
+	}
+	if exact == nil || exact.Name != "English Basics" || exact.TelegramUserID != 101 {
+		t.Fatalf("unexpected exact deck: %#v", exact)
+	}
+
+	missing, err := store.FindDeckByExactNameForOwner(ctx, 101, "nonexistent")
+	if err != nil {
+		t.Fatalf("FindDeckByExactNameForOwner missing: %v", err)
+	}
+	if missing != nil {
+		t.Fatalf("expected nil exact deck, got %#v", missing)
+	}
+
+	candidates, err := store.FindDeckCandidatesForOwner(ctx, 101, "english", 10)
+	if err != nil {
+		t.Fatalf("FindDeckCandidatesForOwner: %v", err)
+	}
+	if len(candidates) != 2 {
+		t.Fatalf("expected 2 candidates, got %#v", candidates)
+	}
+	for _, d := range candidates {
+		if d.TelegramUserID != 101 {
+			t.Fatalf("expected owner 101 candidate, got %#v", d)
+		}
+	}
+}

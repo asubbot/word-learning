@@ -20,6 +20,19 @@ func (s *Service) AddCardsBatchAI(ctx context.Context, generator ai.Generator, p
 	return s.AddCardsBatchAIForUser(ctx, 0, generator, params)
 }
 
+func (s *Service) AddCardsBatchAIForActiveDeckForUser(ctx context.Context, telegramUserID int64, generator ai.Generator, lines []string, mode BatchMode, dryRun bool) (BatchAddReport, error) {
+	deck, err := s.ResolveActiveDeckForUser(ctx, telegramUserID)
+	if err != nil {
+		return BatchAddReport{}, err
+	}
+	return s.AddCardsBatchAIForUser(ctx, telegramUserID, generator, BatchAddAIParams{
+		DeckID: deck.ID,
+		Lines:  lines,
+		Mode:   mode,
+		DryRun: dryRun,
+	})
+}
+
 func (s *Service) AddCardsBatchAIToDeck(ctx context.Context, generator ai.Generator, params BatchAddAIParams) (BatchAddReport, error) {
 	deck, err := s.store.GetDeckByID(ctx, params.DeckID)
 	if err != nil {

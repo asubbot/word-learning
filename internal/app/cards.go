@@ -25,6 +25,14 @@ func (s *Service) AddCard(ctx context.Context, deckID int64, front, back, pronun
 	return s.AddCardForUser(ctx, 0, deckID, front, back, pronunciation, example, conjugation)
 }
 
+func (s *Service) AddCardForActiveDeckForUser(ctx context.Context, telegramUserID int64, front, back, pronunciation, example, conjugation string) (domain.Card, error) {
+	deck, err := s.ResolveActiveDeckForUser(ctx, telegramUserID)
+	if err != nil {
+		return domain.Card{}, err
+	}
+	return s.AddCardForUser(ctx, telegramUserID, deck.ID, front, back, pronunciation, example, conjugation)
+}
+
 func (s *Service) AddCardToDeck(ctx context.Context, deckID int64, front, back, pronunciation, example, conjugation string) (domain.Card, error) {
 	deck, err := s.store.GetDeckByID(ctx, deckID)
 	if err != nil {
@@ -81,6 +89,14 @@ func (s *Service) AddCardForUser(ctx context.Context, telegramUserID, deckID int
 
 func (s *Service) ListCards(ctx context.Context, deckID int64, status string) ([]domain.Card, error) {
 	return s.ListCardsForUser(ctx, 0, deckID, status)
+}
+
+func (s *Service) ListCardsForActiveDeckForUser(ctx context.Context, telegramUserID int64, status string) ([]domain.Card, error) {
+	deck, err := s.ResolveActiveDeckForUser(ctx, telegramUserID)
+	if err != nil {
+		return nil, err
+	}
+	return s.ListCardsForUser(ctx, telegramUserID, deck.ID, status)
 }
 
 func (s *Service) ListCardsForUser(ctx context.Context, telegramUserID, deckID int64, status string) ([]domain.Card, error) {
@@ -315,6 +331,14 @@ func (s *Service) DontRememberCardForUser(ctx context.Context, telegramUserID, c
 
 func (s *Service) NextCard(ctx context.Context, deckID int64) (*domain.Card, error) {
 	return s.NextCardForUser(ctx, 0, deckID)
+}
+
+func (s *Service) NextCardWithStatsForActiveDeckForUser(ctx context.Context, telegramUserID int64) (*domain.Card, DeckStats, error) {
+	deck, err := s.ResolveActiveDeckForUser(ctx, telegramUserID)
+	if err != nil {
+		return nil, DeckStats{}, err
+	}
+	return s.NextCardWithStatsForUser(ctx, telegramUserID, deck.ID)
 }
 
 func (s *Service) NextCardForUser(ctx context.Context, telegramUserID, deckID int64) (*domain.Card, error) {

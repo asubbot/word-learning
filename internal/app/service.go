@@ -16,6 +16,14 @@ type Service struct {
 	store *sqlite.Store
 }
 
+var ErrActiveDeckNotSet = fmt.Errorf("active deck is not set")
+var ErrDeckNameAmbiguous = fmt.Errorf("deck name is ambiguous")
+
+type DeckUseResult struct {
+	Deck       *domain.Deck
+	Candidates []domain.Deck
+}
+
 func NewService(store *sqlite.Store) *Service {
 	return &Service{store: store}
 }
@@ -60,6 +68,46 @@ func (s *Service) ListDecksAll(ctx context.Context) ([]domain.Deck, error) {
 
 func (s *Service) GetDeckByID(ctx context.Context, deckID int64) (*domain.Deck, error) {
 	return s.store.GetDeckByID(ctx, deckID)
+}
+
+func (s *Service) DeckCurrentForUser(ctx context.Context, userID int64) (*domain.Deck, error) {
+	return s.store.GetActiveDeckForUser(ctx, userID)
+}
+
+func (s *Service) DeckUseForUser(ctx context.Context, userID int64, deckName string) (DeckUseResult, error) {
+	trimmed := strings.TrimSpace(deckName)
+	if trimmed == "" {
+		return DeckUseResult{}, fmt.Errorf("deck name must not be empty")
+	}
+	deck, err := s.store.FindDeckByExactNameForOwner(ctx, userID, trimmed)
+	if err != nil {
+		return DeckUseResult{}, err
+	}
+	if deck != nil {
+		if err := s.store.SetActiveDeckForUser(ctx, userID, deck.ID); err != nil {
+			return DeckUseResult{}, err
+		}
+		return DeckUseResult{Deck: deck}, nil
+	}
+	candidates, err := s.store.FindDeckCandidatesForOwner(ctx, userID, trimmed, 10)
+	if err != nil {
+		return DeckUseResult{}, err
+	}
+	if len(candidates) > 0 {
+		return DeckUseResult{Candidates: candidates}, ErrDeckNameAmbiguous
+	}
+	return DeckUseResult{}, fmt.Errorf("deck %q not found", trimmed)
+}
+
+func (s *Service) ResolveActiveDeckForUser(ctx context.Context, userID int64) (*domain.Deck, error) {
+	deck, err := s.store.GetActiveDeckForUser(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	if deck == nil {
+		return nil, ErrActiveDeckNotSet
+	}
+	return deck, nil
 }
 
 func normalizeLanguageCode(value string) (string, error) {

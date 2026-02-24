@@ -31,7 +31,6 @@ func newCardCmd(ctx *commandContext) *cobra.Command {
 }
 
 func newCardAddBatchAICmd(ctx *commandContext) *cobra.Command {
-	var deckID int64
 	var fromFile string
 	var fromStdin bool
 	var dryRun bool
@@ -40,9 +39,6 @@ func newCardAddBatchAICmd(ctx *commandContext) *cobra.Command {
 		Use:   "add-batch-ai",
 		Short: "Add multiple cards with AI-generated fields",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if deckID <= 0 {
-				return fmt.Errorf("--deck must be a positive integer")
-			}
 			if (fromFile == "" && !fromStdin) || (fromFile != "" && fromStdin) {
 				return fmt.Errorf("exactly one input source is required: --from-file or --stdin")
 			}
@@ -66,13 +62,11 @@ func newCardAddBatchAICmd(ctx *commandContext) *cobra.Command {
 				return err
 			}
 			service := app.NewService(ctx.Store)
-			report, err := service.AddCardsBatchAIToDeck(context.Background(), generator, app.BatchAddAIParams{
-				DeckID: deckID,
-				Lines:  strings.Split(string(data), "\n"),
-				Mode:   app.BatchModeCLI,
-				DryRun: dryRun,
-			})
+			report, err := service.AddCardsBatchAIForActiveDeckForUser(context.Background(), 0, generator, strings.Split(string(data), "\n"), app.BatchModeCLI, dryRun)
 			if err != nil {
+				if errors.Is(err, app.ErrActiveDeckNotSet) {
+					return fmt.Errorf("active deck is not set; run 'deck use <name...>'")
+				}
 				return err
 			}
 
@@ -93,16 +87,13 @@ func newCardAddBatchAICmd(ctx *commandContext) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().Int64Var(&deckID, "deck", 0, "Deck ID")
 	cmd.Flags().StringVar(&fromFile, "from-file", "", "Path to file with one front per line")
 	cmd.Flags().BoolVar(&fromStdin, "stdin", false, "Read fronts from stdin")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Generate and validate only, do not write to DB")
-	_ = cmd.MarkFlagRequired("deck")
 	return cmd
 }
 
 func newCardAddCmd(ctx *commandContext) *cobra.Command {
-	var deckID int64
 	var front string
 	var back string
 	var pronunciation string
@@ -114,8 +105,11 @@ func newCardAddCmd(ctx *commandContext) *cobra.Command {
 		Short: "Add a card",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			service := app.NewService(ctx.Store)
-			card, err := service.AddCardToDeck(context.Background(), deckID, front, back, pronunciation, example, conjugation)
+			card, err := service.AddCardForActiveDeckForUser(context.Background(), 0, front, back, pronunciation, example, conjugation)
 			if err != nil {
+				if errors.Is(err, app.ErrActiveDeckNotSet) {
+					return fmt.Errorf("active deck is not set; run 'deck use <name...>'")
+				}
 				return err
 			}
 			fmt.Printf("Card created: id=%d deck=%d\n", card.ID, card.DeckID)
@@ -123,13 +117,11 @@ func newCardAddCmd(ctx *commandContext) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().Int64Var(&deckID, "deck", 0, "Deck ID")
 	cmd.Flags().StringVar(&front, "front", "", "Front side (word/phrase)")
 	cmd.Flags().StringVar(&back, "back", "", "Back side (translation)")
 	cmd.Flags().StringVar(&pronunciation, "pronunciation", "", "Optional pronunciation (e.g. /banished/)")
 	cmd.Flags().StringVar(&example, "example", "", "Optional usage example")
 	cmd.Flags().StringVar(&conjugation, "conjugation", "", "Optional conjugation forms")
-	_ = cmd.MarkFlagRequired("deck")
 	_ = cmd.MarkFlagRequired("front")
 	_ = cmd.MarkFlagRequired("back")
 
@@ -137,7 +129,6 @@ func newCardAddCmd(ctx *commandContext) *cobra.Command {
 }
 
 func newCardListCmd(ctx *commandContext) *cobra.Command {
-	var deckID int64
 	var status string
 
 	cmd := &cobra.Command{
@@ -145,8 +136,11 @@ func newCardListCmd(ctx *commandContext) *cobra.Command {
 		Short: "List cards",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			service := app.NewService(ctx.Store)
-			cards, err := service.ListCardsInDeck(context.Background(), deckID, status)
+			cards, err := service.ListCardsForActiveDeckForUser(context.Background(), 0, status)
 			if err != nil {
+				if errors.Is(err, app.ErrActiveDeckNotSet) {
+					return fmt.Errorf("active deck is not set; run 'deck use <name...>'")
+				}
 				return err
 			}
 			printCards(cards)
@@ -154,9 +148,7 @@ func newCardListCmd(ctx *commandContext) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().Int64Var(&deckID, "deck", 0, "Deck ID")
 	cmd.Flags().StringVar(&status, "status", "", "Optional filter: active|removed")
-	_ = cmd.MarkFlagRequired("deck")
 
 	return cmd
 }
@@ -210,15 +202,16 @@ func newCardRestoreCmd(ctx *commandContext) *cobra.Command {
 }
 
 func newCardGetCmd(ctx *commandContext) *cobra.Command {
-	var deckID int64
-
 	cmd := &cobra.Command{
 		Use:   "get",
-		Short: "Get next available card for a deck",
+		Short: "Get next available card for active deck",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			service := app.NewService(ctx.Store)
-			card, stats, err := service.NextCardWithStatsInDeck(context.Background(), deckID)
+			card, stats, err := service.NextCardWithStatsForActiveDeckForUser(context.Background(), 0)
 			if err != nil {
+				if errors.Is(err, app.ErrActiveDeckNotSet) {
+					return fmt.Errorf("active deck is not set; run 'deck use <name...>'")
+				}
 				return err
 			}
 			if card == nil {
@@ -230,9 +223,6 @@ func newCardGetCmd(ctx *commandContext) *cobra.Command {
 			return nil
 		},
 	}
-
-	cmd.Flags().Int64Var(&deckID, "deck", 0, "Deck ID")
-	_ = cmd.MarkFlagRequired("deck")
 	return cmd
 }
 
