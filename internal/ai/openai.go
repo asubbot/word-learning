@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -19,6 +20,7 @@ type Config struct {
 	Model      string
 	TimeoutSec int
 	MaxRetries int
+	PromptsDir string
 }
 
 type OpenAIGenerator struct {
@@ -55,12 +57,24 @@ func LoadConfigFromEnv() (Config, error) {
 		}
 		maxRetries = parsed
 	}
+	promptsDir := strings.TrimSpace(os.Getenv("OPENAI_PROMPTS_DIR"))
+	if promptsDir == "" {
+		promptsDir = "./prompts"
+	}
+	info, err := os.Stat(promptsDir)
+	if err != nil {
+		return Config{}, fmt.Errorf("OPENAI_PROMPTS_DIR invalid: %w", err)
+	}
+	if !info.IsDir() {
+		return Config{}, fmt.Errorf("OPENAI_PROMPTS_DIR must point to a directory")
+	}
 	return Config{
 		APIKey:     apiKey,
 		BaseURL:    strings.TrimSuffix(baseURL, "/"),
 		Model:      model,
 		TimeoutSec: timeoutSec,
 		MaxRetries: maxRetries,
+		PromptsDir: promptsDir,
 	}, nil
 }
 
@@ -80,12 +94,6 @@ func NewGeneratorFromEnv() (Generator, error) {
 	}
 	return NewOpenAIGenerator(cfg), nil
 }
-
-const systemPrompt = `You generate flashcard fields for a word or phrase.
-- "back": translation into language_to. For single words use the main equivalent. For phrases, idioms, or fixed expressions use the natural, idiomatic equivalent (how a native would say it), never a literal word-for-word translation. Example: EN "Is that so" → RU "Неужели?" or "Правда?", not "Так ли это". One concise back; if several variants exist, give the most common.
-- "pronunciation": pronunciation of the word/phrase in language_from using IPA only, e.g. /bænɪʃt/ for English. Use slashes for broad transcription.
-- "description": one short usage example sentence in language_from that contains the word/phrase (no translation).
-Return strict JSON only: {"back":"...","pronunciation":"...","description":"..."}. No markdown, no extra text.`
 
 type chatCompletionsRequest struct {
 	Model       string                   `json:"model"`
@@ -139,7 +147,29 @@ func asProviderError(err error, target **ProviderError) bool {
 	return true
 }
 
+func resolveSystemPrompt(promptsDir, languageFrom, languageTo string) (string, error) {
+	from := strings.ToLower(strings.TrimSpace(languageFrom))
+	to := strings.ToLower(strings.TrimSpace(languageTo))
+	if from == "" || to == "" {
+		return "", fmt.Errorf("language pair is required for prompt resolution")
+	}
+	promptPath := filepath.Join(promptsDir, fmt.Sprintf("prompt_%s-%s.txt", from, to))
+	b, err := os.ReadFile(promptPath)
+	if err != nil {
+		return "", fmt.Errorf("prompt file for pair %s-%s not found/readable at %s: %w", from, to, promptPath, err)
+	}
+	prompt := strings.TrimSpace(string(b))
+	if prompt == "" {
+		return "", fmt.Errorf("prompt file for pair %s-%s is empty: %s", from, to, promptPath)
+	}
+	return prompt, nil
+}
+
 func (g *OpenAIGenerator) generateOnce(ctx context.Context, req GenerateCardRequest) (GeneratedCard, error) {
+	systemPrompt, err := resolveSystemPrompt(g.cfg.PromptsDir, req.LanguageFrom, req.LanguageTo)
+	if err != nil {
+		return GeneratedCard{}, &ProviderError{Op: "resolve system prompt", Retryable: false, Err: err}
+	}
 	payload := chatCompletionsRequest{
 		Model: g.cfg.Model,
 		Messages: []chatCompletionsMessage{

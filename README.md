@@ -171,6 +171,10 @@ The project also includes a Telegram bot binary that reuses the same app/storage
 - `OPENAI_MODEL` - optional model name (default: `gpt-4o-mini`).
 - `OPENAI_TIMEOUT_SEC` - optional HTTP timeout in seconds (default: `30`).
 - `OPENAI_MAX_RETRIES` - optional retry count for retryable API failures (default: `2`).
+- `OPENAI_PROMPTS_DIR` - directory with per-language prompt files (default: `./prompts`).
+  - File naming is strict: `prompt_<from>-<to>.txt`, for example `prompt_en-ru.txt`.
+  - Language pair is normalized to lowercase + trim before lookup.
+  - No fallback prompt in code: if the file is missing/empty/unreadable, generation fails with an explicit error.
 
 ### Start bot
 
@@ -179,6 +183,24 @@ export TELEGRAM_BOT_TOKEN="<your_token>"
 export WORDLEARN_DB_PATH="./wordlearn.db"
 go run ./cmd/wordbot
 ```
+
+### Run Telegram Bot with Docker
+
+Create a `.env` in the project root with at least `TELEGRAM_BOT_TOKEN` and `OPENAI_API_KEY` (for AI batch). Then:
+
+```bash
+docker compose up -d --build
+```
+
+- Image is built from `Dockerfile` (multi-stage, only `cmd/wordbot`).
+- DB is shared with host via bind mount `./data:/data`; inside container it is `/data/wordlearn.db`.
+- Run host CLI with `WORDLEARN_DB_PATH=./data/wordlearn.db` to use the same DB file as the Docker bot.
+- Prompt files are mounted read-only via `./prompts:/prompts:ro`; set `OPENAI_PROMPTS_DIR=/prompts` in container env.
+- Example prompt files:
+  - `/prompts/prompt_en-ru.txt`
+  - `/prompts/prompt_pt-ru.txt`
+
+View logs: `docker compose logs -f wordbot`. Stop: `docker compose down`.
 
 ### Bot commands
 

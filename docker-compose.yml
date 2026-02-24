@@ -1,0 +1,14 @@
+services:
+  wordbot:
+    build: .
+    image: word-learning-cli/wordbot:latest
+    container_name: wordbot
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # DB path inside container; host binds ./data to /data
+      WORDLEARN_DB_PATH: /data/wordlearn.db
+      OPENAI_PROMPTS_DIR: /prompts
+    volumes:
+      - ./data:/data
+      - ./prompts:/prompts:ro
