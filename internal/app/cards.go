@@ -13,6 +13,7 @@ import (
 )
 
 var ErrCardNotFound = errors.New("card not found")
+var ErrCardAlreadyExists = errors.New("card with this front already exists in deck")
 
 type DeckStats struct {
 	Active    int64
@@ -46,6 +47,14 @@ func (s *Service) AddCardForUser(ctx context.Context, telegramUserID, deckID int
 	}
 	if !exists {
 		return domain.Card{}, fmt.Errorf("deck %d does not exist", deckID)
+	}
+
+	frontExists, err := s.store.CardFrontExistsInDeckForOwner(ctx, deckID, telegramUserID, front)
+	if err != nil {
+		return domain.Card{}, err
+	}
+	if frontExists {
+		return domain.Card{}, ErrCardAlreadyExists
 	}
 
 	return s.store.CreateCard(ctx, sqlite.CardCreateParams{

@@ -219,6 +219,12 @@ func TestServiceCardValidationAndNotFound(t *testing.T) {
 	if _, err := svc.AddCard(ctx, 999, "front", "back", "/f/", "desc"); err == nil {
 		t.Fatal("expected error for unknown deck")
 	}
+	if _, err := svc.AddCard(ctx, deckID, "duplicate", "one", "", ""); err != nil {
+		t.Fatalf("unexpected error on first duplicate seed: %v", err)
+	}
+	if _, err := svc.AddCard(ctx, deckID, "  DuPlicate  ", "two", "", ""); !errors.Is(err, ErrCardAlreadyExists) {
+		t.Fatalf("expected ErrCardAlreadyExists, got %v", err)
+	}
 
 	if _, err := svc.ListCards(ctx, deckID, "wrong"); err == nil {
 		t.Fatal("expected error for invalid status")

@@ -33,6 +33,28 @@ func (s *Store) DeckExists(ctx context.Context, deckID int64) (bool, error) {
 	return exists == 1, nil
 }
 
+func (s *Store) CardFrontExistsInDeckForOwner(ctx context.Context, deckID int64, telegramUserID int64, front string) (bool, error) {
+	var exists int
+	err := s.db.QueryRowContext(
+		ctx,
+		`SELECT EXISTS(
+			SELECT 1
+			FROM cards c
+			INNER JOIN decks d ON d.id = c.deck_id
+			WHERE c.deck_id = ?
+			  AND d.telegram_user_id = ?
+			  AND lower(trim(c.front)) = lower(trim(?))
+		)`,
+		deckID,
+		telegramUserID,
+		front,
+	).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("check card front exists: %w", err)
+	}
+	return exists == 1, nil
+}
+
 func (s *Store) CreateCard(ctx context.Context, params CardCreateParams) (domain.Card, error) {
 	result, err := s.db.ExecContext(
 		ctx,

@@ -246,3 +246,36 @@ func TestDeckOwnerIsolation(t *testing.T) {
 		t.Fatal("did not expect owner2 to see owner1 deck")
 	}
 }
+
+func TestCardFrontExistsInDeckForOwner(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	deck, err := store.CreateDeckForOwner(ctx, 101, "OwnerOne", "EN", "RU")
+	if err != nil {
+		t.Fatalf("CreateDeckForOwner owner1: %v", err)
+	}
+	if _, err := store.CreateCard(ctx, CardCreateParams{
+		DeckID: deck.ID, Front: "Banished", Back: "изгнанный", Pronunciation: "/banished/", Description: "",
+	}); err != nil {
+		t.Fatalf("CreateCard: %v", err)
+	}
+
+	exists, err := store.CardFrontExistsInDeckForOwner(ctx, deck.ID, 101, "  banished ")
+	if err != nil {
+		t.Fatalf("CardFrontExistsInDeckForOwner owner1: %v", err)
+	}
+	if !exists {
+		t.Fatal("expected existing front for owner1")
+	}
+
+	exists, err = store.CardFrontExistsInDeckForOwner(ctx, deck.ID, 202, "banished")
+	if err != nil {
+		t.Fatalf("CardFrontExistsInDeckForOwner owner2: %v", err)
+	}
+	if exists {
+		t.Fatal("did not expect owner2 to see owner1 card front")
+	}
+}
