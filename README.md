@@ -27,7 +27,7 @@ go mod tidy
 ### 1) Create a deck
 
 ```bash
-go run ./cmd/wordcli deck create --name "English Basics" --from EN --to RU
+go run ./cmd/wordcli deck create EN RU "English Basics"
 ```
 
 ### 2) Add a card
@@ -58,7 +58,7 @@ go run ./cmd/wordcli card dont-remember --id 1
 
 ### Deck
 
-- `deck create --name --from --to`
+- `deck create <from> <to> <name...>`
 - `deck list`
 
 ### Card
@@ -75,14 +75,13 @@ go run ./cmd/wordcli card dont-remember --id 1
 
 ### Global flags
 
-- `--db <path>` - path to the SQLite DB file.
 - `-h, --help` - show help.
 
 ### Deck
 
-- `deck create --name <name> --from <lang> --to <lang>`
+- `deck create <from> <to> <name...>`
   - creates a new deck;
-  - `--from` and `--to` accept language codes with 2-8 latin letters (e.g. `EN`, `RU`);
+  - `<from>` and `<to>` accept language codes with 2-8 latin letters (e.g. `EN`, `RU`);
   - source and target languages must be different.
 - `deck list`
   - prints all existing decks.
@@ -111,17 +110,16 @@ go run ./cmd/wordcli card dont-remember --id 1
 
 ## Database Usage
 
-DB path resolution order is:
-1. `--db` command-line flag
-2. `WORDCLI_DB_PATH` environment variable
-3. if neither is set, process exits with an error
+DB path is taken from:
+1. `WORDLEARN_DB_PATH` environment variable
+2. if it is not set, process exits with an error
 
 Examples:
 
 ```bash
-export WORDCLI_DB_PATH=./bot.db
+export WORDLEARN_DB_PATH=./wordlearn.db
 go run ./cmd/wordcli deck list
-go run ./cmd/wordcli --db ./data/mywords.db deck list
+go run ./cmd/wordcli deck create EN RU "English Basics"
 ```
 
 ## Quality Checks
@@ -152,7 +150,7 @@ The project also includes a Telegram bot binary that reuses the same app/storage
 ### Required environment variables
 
 - `TELEGRAM_BOT_TOKEN` - Telegram bot token from BotFather.
-- `WORDCLI_DB_PATH` - SQLite DB path (required unless `--db` is passed).
+- `WORDLEARN_DB_PATH` - SQLite DB path (required).
 - `TELEGRAM_POLLING_TIMEOUT` - long-poll timeout in seconds (optional, default: `30`).
 - `BOT_ALLOWED_USER_IDS` - optional comma-separated allowlist of Telegram user IDs.
 
@@ -160,9 +158,8 @@ The project also includes a Telegram bot binary that reuses the same app/storage
 
 ```bash
 export TELEGRAM_BOT_TOKEN="<your_token>"
-export WORDCLI_DB_PATH="./bot.db"
+export WORDLEARN_DB_PATH="./wordlearn.db"
 go run ./cmd/wordbot
-go run ./cmd/wordbot --db ./bot.db
 ```
 
 ### Bot commands
@@ -170,8 +167,7 @@ go run ./cmd/wordbot --db ./bot.db
 - `/start` - show help.
 - `/help` - show help.
 - `/whoami` - show your Telegram user ID.
-- `/health` - health check.
-- `/deck_create <name> <from> <to>` - create deck.
+- `/deck_create <from> <to> <name...>` - create deck.
 - `/deck_list` - list your decks.
 - `/card_add <deck_id> | <front> | <back> | <pronunciation> | <description>` - add card.
 - `/next <deck_id>` - show next due card with inline actions.
@@ -211,7 +207,7 @@ source <(go run ./cmd/wordcli completion zsh)
 go run ./cmd/wordcli completion fish | source
 ```
 
-After that, `Tab` completion should suggest commands and flags (`card`, `deck`, `--db`, etc.).
+After that, `Tab` completion should suggest commands and flags (`card`, `deck`, etc.).
 
 Persistent setup for `zsh`:
 
@@ -229,42 +225,43 @@ Minimal end-to-end flow for a clean DB:
 ```bash
 # 1) Remove previous test DB (if any)
 rm -f ./e2e.db
+export WORDLEARN_DB_PATH=./e2e.db
 
 # 2) Create a deck
-go run ./cmd/wordcli --db ./e2e.db deck create --name "English Basics" --from EN --to RU
+go run ./cmd/wordcli deck create EN RU "English Basics"
 
 # 3) Add a card
-go run ./cmd/wordcli --db ./e2e.db card add --deck 1 --front "banished" --back "изгнанный" --pronunciation "/banished/" --description "He was banished from the kingdom."
+go run ./cmd/wordcli card add --deck 1 --front "banished" --back "изгнанный" --pronunciation "/banished/" --description "He was banished from the kingdom."
 
 # 4) Verify card is active
-go run ./cmd/wordcli --db ./e2e.db card list --deck 1 --status active
+go run ./cmd/wordcli card list --deck 1 --status active
 
 # 5) Get next card
-go run ./cmd/wordcli --db ./e2e.db card get --deck 1
+go run ./cmd/wordcli card get --deck 1
 
 # 6) Mark as remembered (moves to future due date)
-go run ./cmd/wordcli --db ./e2e.db card remember --id 1
+go run ./cmd/wordcli card remember --id 1
 
 # 7) Verify card is temporarily unavailable (due date not reached)
-go run ./cmd/wordcli --db ./e2e.db card get --deck 1
+go run ./cmd/wordcli card get --deck 1
 
 # 8) Mark as not remembered (short retry)
-go run ./cmd/wordcli --db ./e2e.db card dont-remember --id 1
+go run ./cmd/wordcli card dont-remember --id 1
 
 # 9) Immediately after dont-remember, card may still be unavailable (~10 minute delay)
-go run ./cmd/wordcli --db ./e2e.db card get --deck 1
+go run ./cmd/wordcli card get --deck 1
 
 # 10) Remove card from rotation
-go run ./cmd/wordcli --db ./e2e.db card remove --id 1
+go run ./cmd/wordcli card remove --id 1
 
 # 11) Verify removed list
-go run ./cmd/wordcli --db ./e2e.db card list --deck 1 --status removed
+go run ./cmd/wordcli card list --deck 1 --status removed
 
 # 12) Restore card
-go run ./cmd/wordcli --db ./e2e.db card restore --id 1
+go run ./cmd/wordcli card restore --id 1
 
 # 13) Final active list check
-go run ./cmd/wordcli --db ./e2e.db card list --deck 1 --status active
+go run ./cmd/wordcli card list --deck 1 --status active
 ```
 
 ## Makefile Commands
@@ -288,7 +285,7 @@ make check
 
 Use one Telegram user and execute:
 
-1. `/deck_create basics EN RU`
+1. `/deck_create EN RU basics`
 2. `/deck_list`
 3. `/card_add 1 | banished | изгнанный | /banished/ | He was banished from the kingdom.`
 4. `/next 1`
@@ -313,12 +310,11 @@ Keep the process running during verification.
 ### 2) Basic command health
 
 - `/start` -> bot returns help text.
-- `/health` -> bot returns `OK`.
 - `/deck_list` -> initially empty or existing user decks only.
 
 ### 3) Deck and card creation
 
-1. `/deck_create basics EN RU`
+1. `/deck_create EN RU basics`
 2. `/deck_list` (verify deck appears)
 3. `/card_add 1 | banished | изгнанный | /banished/ | He was banished from the kingdom.`
 
@@ -350,7 +346,7 @@ Expected:
 ### 6) Negative validation checks
 
 - `/next abc` -> validation error for non-numeric deck id.
-- `/deck_create basics EN EN` -> validation error for same language pair.
+- `/deck_create EN EN basics` -> validation error for same language pair.
 - `/card_add 1 | only_front` -> usage/argument format error.
 
 ### 7) Cross-user isolation

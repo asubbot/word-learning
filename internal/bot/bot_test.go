@@ -84,7 +84,7 @@ func TestBotCommandDeckAndCardFlow(t *testing.T) {
 	h, api := newTestHandler(t)
 	ctx := context.Background()
 
-	if err := h.handleUpdate(ctx, tgbotapi.Update{Message: commandMessage(100, 42, "/deck_create basics EN RU", "deck_create")}); err != nil {
+	if err := h.handleUpdate(ctx, tgbotapi.Update{Message: commandMessage(100, 42, "/deck_create EN RU English Basics", "deck_create")}); err != nil {
 		t.Fatalf("deck_create: %v", err)
 	}
 	if len(api.sentTexts) == 0 || !strings.Contains(api.sentTexts[len(api.sentTexts)-1], "Deck created") {
@@ -154,7 +154,7 @@ func TestBotAllowlistDeniesNonAllowedMessageUser(t *testing.T) {
 	h.allow = buildAllowlist([]int64{42})
 	ctx := context.Background()
 
-	msg := commandMessage(100, 777, "/health", "health")
+	msg := commandMessage(100, 777, "/help", "help")
 	if err := h.handleUpdate(ctx, tgbotapi.Update{Message: msg}); err != nil {
 		t.Fatalf("handle update: %v", err)
 	}

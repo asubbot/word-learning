@@ -14,18 +14,15 @@ type Config struct {
 	AllowedUserIDs   []int64
 }
 
-func LoadConfigFromEnv(dbPathFlag string) (Config, error) {
+func LoadConfigFromEnv() (Config, error) {
 	token := strings.TrimSpace(os.Getenv("TELEGRAM_BOT_TOKEN"))
 	if token == "" {
 		return Config{}, fmt.Errorf("TELEGRAM_BOT_TOKEN is required")
 	}
 
-	dbPath := strings.TrimSpace(dbPathFlag)
+	dbPath := strings.TrimSpace(os.Getenv("WORDLEARN_DB_PATH"))
 	if dbPath == "" {
-		dbPath = strings.TrimSpace(os.Getenv("WORDCLI_DB_PATH"))
-	}
-	if dbPath == "" {
-		return Config{}, fmt.Errorf("database path is required: pass --db or set WORDCLI_DB_PATH")
+		return Config{}, fmt.Errorf("database path is required: set WORDLEARN_DB_PATH")
 	}
 
 	pollingTimeout := 30

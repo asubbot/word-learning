@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"word-learning-cli/internal/app"
@@ -21,14 +22,15 @@ func newDeckCmd(ctx *commandContext) *cobra.Command {
 }
 
 func newDeckCreateCmd(ctx *commandContext) *cobra.Command {
-	var name string
-	var languageFrom string
-	var languageTo string
-
 	createCmd := &cobra.Command{
-		Use:   "create",
+		Use:   "create <from> <to> <name...>",
 		Short: "Create a new deck",
+		Args:  cobra.MinimumNArgs(3),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			languageFrom := args[0]
+			languageTo := args[1]
+			name := strings.Join(args[2:], " ")
+
 			service := app.NewService(ctx.Store)
 			deck, err := service.CreateDeck(context.Background(), name, languageFrom, languageTo)
 			if err != nil {
@@ -38,13 +40,6 @@ func newDeckCreateCmd(ctx *commandContext) *cobra.Command {
 			return nil
 		},
 	}
-
-	createCmd.Flags().StringVar(&name, "name", "", "Deck name")
-	createCmd.Flags().StringVar(&languageFrom, "from", "", "Source language code (e.g. EN)")
-	createCmd.Flags().StringVar(&languageTo, "to", "", "Target language code (e.g. RU)")
-	_ = createCmd.MarkFlagRequired("name")
-	_ = createCmd.MarkFlagRequired("from")
-	_ = createCmd.MarkFlagRequired("to")
 
 	return createCmd
 }

@@ -139,8 +139,6 @@ func (h *handler) handleCommand(ctx context.Context, msg *tgbotapi.Message) erro
 		return h.sendText(msg.Chat.ID, helpMessage())
 	case "whoami":
 		return h.sendText(msg.Chat.ID, fmt.Sprintf("Your Telegram user ID: %d", userID))
-	case "health":
-		return h.sendText(msg.Chat.ID, "OK")
 	case "deck_create":
 		name, langFrom, langTo, err := parseDeckCreateArgs(msg.CommandArguments())
 		if err != nil {
@@ -327,8 +325,7 @@ func helpMessage() string {
 /start - show welcome message
 /help - show this help
 /whoami - show your Telegram user ID
-/health - health check
-/deck_create <name> <from> <to> - create deck
+/deck_create <from> <to> <name...> - create deck
 /deck_list - list your decks
 /card_add <deck_id> | <front> | <back> | <pronunciation> | <description> - add card
 /next <deck_id> - show next due card with action buttons`) // raw user-visible text
@@ -336,10 +333,13 @@ func helpMessage() string {
 
 func parseDeckCreateArgs(args string) (string, string, string, error) {
 	parts := strings.Fields(args)
-	if len(parts) != 3 {
-		return "", "", "", fmt.Errorf("usage: /deck_create <name> <from> <to>")
+	if len(parts) < 3 {
+		return "", "", "", fmt.Errorf("usage: /deck_create <from> <to> <name...>")
 	}
-	return parts[0], parts[1], parts[2], nil
+	languageFrom := parts[0]
+	languageTo := parts[1]
+	name := strings.Join(parts[2:], " ")
+	return name, languageFrom, languageTo, nil
 }
 
 func parseDeckIDArg(args string) (int64, error) {

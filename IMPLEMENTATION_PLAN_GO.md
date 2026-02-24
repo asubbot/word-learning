@@ -14,7 +14,7 @@ Validation:
 ## Step 2. Data storage and DB schema
 - Add SQLite.
 - Add schema initialization for `decks` and `cards` tables.
-- Add `--db` flag.
+- Use `WORDLEARN_DB_PATH` environment variable for DB path resolution.
 
 Validation:
 - DB file is created on first run.
@@ -22,13 +22,13 @@ Validation:
 - Re-run does not break schema.
 
 ## Step 3. Implement deck commands
-- `deck create --name --from --to`
+- `deck create <from> <to> <name...>`
 - `deck list`
-- Validate required flags and language codes.
+- Validate required arguments and language codes.
 
 Validation:
 - After `deck create`, deck appears in `deck list`.
-- Missing-flag errors are clear.
+- Missing-argument errors are clear.
 
 ## Step 4. Implement card commands (CRUD + statuses)
 - `card add --deck --front --back --description`
