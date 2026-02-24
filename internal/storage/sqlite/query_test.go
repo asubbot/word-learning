@@ -76,40 +76,17 @@ func TestListCardsWithStatusFilter(t *testing.T) {
 		t.Fatalf("CreateDeck: %v", err)
 	}
 
-	activeCard, err := store.CreateCard(ctx, CardCreateParams{DeckID: deck.ID, Front: "a", Back: "a", Pronunciation: "/a/", Example: ""})
-	if err != nil {
-		t.Fatalf("CreateCard active: %v", err)
-	}
-	postponedCard, err := store.CreateCard(ctx, CardCreateParams{DeckID: deck.ID, Front: "b", Back: "b", Pronunciation: "/b/", Example: ""})
-	if err != nil {
-		t.Fatalf("CreateCard postponed: %v", err)
-	}
-	removedCard, err := store.CreateCard(ctx, CardCreateParams{DeckID: deck.ID, Front: "c", Back: "c", Pronunciation: "/c/", Example: ""})
-	if err != nil {
-		t.Fatalf("CreateCard removed: %v", err)
-	}
+	activeCard := mustCreateCardForQueryTest(t, store, ctx, deck.ID, "a", "a", "/a/", "", "")
+	postponedCard := mustCreateCardForQueryTest(t, store, ctx, deck.ID, "b", "b", "/b/", "", "")
+	removedCard := mustCreateCardForQueryTest(t, store, ctx, deck.ID, "c", "c", "/c/", "", "")
 
 	future := time.Now().UTC().Add(2 * time.Hour)
-	if updated, err := store.UpdateCardSchedule(ctx, postponedCard.ID, future, 600, 2.3, 1, time.Now().UTC()); err != nil || !updated {
-		t.Fatalf("UpdateCardSchedule postponed: updated=%v err=%v", updated, err)
-	}
-	if updated, err := store.SetCardStatus(ctx, removedCard.ID, domain.CardStatusRemoved); err != nil || !updated {
-		t.Fatalf("SetCardStatus removed: updated=%v err=%v", updated, err)
-	}
-
-	allCards, err := store.ListCards(ctx, deck.ID, nil)
-	if err != nil {
-		t.Fatalf("ListCards all: %v", err)
-	}
-	if len(allCards) != 3 {
-		t.Fatalf("expected 3 cards, got %d", len(allCards))
-	}
+	mustUpdateCardScheduleForQueryTest(t, store, ctx, postponedCard.ID, future, 600, 2.3, 1, "postponed")
+	mustSetCardStatusForQueryTest(t, store, ctx, removedCard.ID, domain.CardStatusRemoved)
+	assertCardCountForDeck(t, store, ctx, deck.ID, nil, 3, "all")
 
 	activeStatus := domain.CardStatusActive
-	activeCards, err := store.ListCards(ctx, deck.ID, &activeStatus)
-	if err != nil {
-		t.Fatalf("ListCards active: %v", err)
-	}
+	activeCards := mustListCardsForQueryTest(t, store, ctx, deck.ID, &activeStatus, "active")
 	if len(activeCards) != 2 {
 		t.Fatalf("expected 2 active cards, got %#v", activeCards)
 	}
@@ -118,10 +95,7 @@ func TestListCardsWithStatusFilter(t *testing.T) {
 	}
 
 	removedStatus := domain.CardStatusRemoved
-	removedCards, err := store.ListCards(ctx, deck.ID, &removedStatus)
-	if err != nil {
-		t.Fatalf("ListCards removed: %v", err)
-	}
+	removedCards := mustListCardsForQueryTest(t, store, ctx, deck.ID, &removedStatus, "removed")
 	if len(removedCards) != 1 || removedCards[0].ID != removedCard.ID {
 		t.Fatalf("unexpected removed cards: %#v", removedCards)
 	}
@@ -454,7 +428,7 @@ func TestBackfillEntriesPreferLatestFromLegacyCards(t *testing.T) {
 	t.Cleanup(func() { _ = store.Close() })
 	ctx := context.Background()
 
-	_, err = store.DB().ExecContext(ctx, `
+	mustExecQueryTest(t, store, ctx, `
 		CREATE TABLE decks (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			telegram_user_id INTEGER NOT NULL DEFAULT 0,
@@ -482,54 +456,130 @@ func TestBackfillEntriesPreferLatestFromLegacyCards(t *testing.T) {
 			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 		);
 	`)
-	if err != nil {
-		t.Fatalf("create legacy schema: %v", err)
-	}
 
 	deck, err := store.CreateDeckForOwner(ctx, 101, "Legacy", "EN", "RU")
 	if err != nil {
 		t.Fatalf("CreateDeckForOwner: %v", err)
 	}
-	if _, err := store.DB().ExecContext(ctx,
-		`INSERT INTO cards (deck_id, front, back, pronunciation, example, conjugation, status) VALUES (?, ?, ?, ?, ?, ?, 'active')`,
-		deck.ID, "banished", "old-back", "/b/", "old ex", "",
-	); err != nil {
-		t.Fatalf("insert old card: %v", err)
-	}
-	if _, err := store.DB().ExecContext(ctx,
-		`INSERT INTO cards (deck_id, front, back, pronunciation, example, conjugation, status) VALUES (?, ?, ?, ?, ?, ?, 'active')`,
-		deck.ID, "banished", "new-back", "/b2/", "new ex", "form",
-	); err != nil {
-		t.Fatalf("insert new card: %v", err)
-	}
+	mustInsertLegacyCard(t, store, ctx, deck.ID, "banished", "old-back", "/b/", "old ex", "")
+	mustInsertLegacyCard(t, store, ctx, deck.ID, "banished", "new-back", "/b2/", "new ex", "form")
 
 	if err := store.InitSchema(ctx); err != nil {
 		t.Fatalf("InitSchema legacy backfill: %v", err)
 	}
 
-	var entriesCount int64
-	if err := store.DB().QueryRowContext(ctx, `SELECT COUNT(1) FROM entries WHERE language_from='EN' AND language_to='RU' AND front_norm='banished'`).Scan(&entriesCount); err != nil {
-		t.Fatalf("count entries: %v", err)
-	}
+	entriesCount := mustCountInt64QueryTest(t, store, ctx, `SELECT COUNT(1) FROM entries WHERE language_from='EN' AND language_to='RU' AND front_norm='banished'`, "count entries")
 	if entriesCount != 1 {
 		t.Fatalf("expected exactly one entry, got %d", entriesCount)
 	}
 
-	var back, pron, ex, conj string
-	if err := store.DB().QueryRowContext(ctx, `SELECT back, pronunciation, example, conjugation FROM entries WHERE language_from='EN' AND language_to='RU' AND front_norm='banished'`).Scan(&back, &pron, &ex, &conj); err != nil {
-		t.Fatalf("select entry values: %v", err)
-	}
+	back, pron, ex, conj := mustLoadEntryFieldsByNorm(t, store, ctx, "EN", "RU", "banished")
 	if back != "new-back" || pron != "/b2/" || ex != "new ex" || conj != "form" {
 		t.Fatalf("expected prefer-latest entry values, got back=%q pron=%q ex=%q conj=%q", back, pron, ex, conj)
 	}
 
-	var missing int64
-	if err := store.DB().QueryRowContext(ctx, `SELECT COUNT(1) FROM cards WHERE entry_id IS NULL`).Scan(&missing); err != nil {
-		t.Fatalf("count missing entry_id: %v", err)
-	}
+	missing := mustCountInt64QueryTest(t, store, ctx, `SELECT COUNT(1) FROM cards WHERE entry_id IS NULL`, "count missing entry_id")
 	if missing != 0 {
 		t.Fatalf("expected 0 cards with NULL entry_id, got %d", missing)
 	}
+}
+
+func mustCreateCardForQueryTest(t *testing.T, store *Store, ctx context.Context, deckID int64, front, back, pronunciation, example, conjugation string) domain.Card {
+	t.Helper()
+	card, err := store.CreateCard(ctx, CardCreateParams{
+		DeckID:        deckID,
+		Front:         front,
+		Back:          back,
+		Pronunciation: pronunciation,
+		Example:       example,
+		Conjugation:   conjugation,
+	})
+	if err != nil {
+		t.Fatalf("CreateCard %q: %v", front, err)
+	}
+	return card
+}
+
+func mustUpdateCardScheduleForQueryTest(t *testing.T, store *Store, ctx context.Context, cardID int64, due time.Time, interval int64, ease float64, lapses int64, label string) {
+	t.Helper()
+	updated, err := store.UpdateCardSchedule(ctx, cardID, due, interval, ease, lapses, time.Now().UTC())
+	if err != nil || !updated {
+		t.Fatalf("UpdateCardSchedule %s: updated=%v err=%v", label, updated, err)
+	}
+}
+
+func mustSetCardStatusForQueryTest(t *testing.T, store *Store, ctx context.Context, cardID int64, status domain.CardStatus) {
+	t.Helper()
+	updated, err := store.SetCardStatus(ctx, cardID, status)
+	if err != nil || !updated {
+		t.Fatalf("SetCardStatus: updated=%v err=%v", updated, err)
+	}
+}
+
+func mustListCardsForQueryTest(t *testing.T, store *Store, ctx context.Context, deckID int64, status *domain.CardStatus, label string) []domain.Card {
+	t.Helper()
+	cards, err := store.ListCards(ctx, deckID, status)
+	if err != nil {
+		t.Fatalf("ListCards %s: %v", label, err)
+	}
+	return cards
+}
+
+func assertCardCountForDeck(t *testing.T, store *Store, ctx context.Context, deckID int64, status *domain.CardStatus, want int, label string) {
+	t.Helper()
+	cards := mustListCardsForQueryTest(t, store, ctx, deckID, status, label)
+	if len(cards) != want {
+		t.Fatalf("expected %d cards for %s, got %d", want, label, len(cards))
+	}
+}
+
+func mustExecQueryTest(t *testing.T, store *Store, ctx context.Context, statement string, args ...any) {
+	t.Helper()
+	if _, err := store.DB().ExecContext(ctx, statement, args...); err != nil {
+		t.Fatalf("exec statement: %v", err)
+	}
+}
+
+func mustInsertLegacyCard(t *testing.T, store *Store, ctx context.Context, deckID int64, front, back, pronunciation, example, conjugation string) {
+	t.Helper()
+	mustExecQueryTest(
+		t,
+		store,
+		ctx,
+		`INSERT INTO cards (deck_id, front, back, pronunciation, example, conjugation, status) VALUES (?, ?, ?, ?, ?, ?, 'active')`,
+		deckID,
+		front,
+		back,
+		pronunciation,
+		example,
+		conjugation,
+	)
+}
+
+func mustCountInt64QueryTest(t *testing.T, store *Store, ctx context.Context, query, label string, args ...any) int64 {
+	t.Helper()
+	var value int64
+	if err := store.DB().QueryRowContext(ctx, query, args...).Scan(&value); err != nil {
+		t.Fatalf("%s: %v", label, err)
+	}
+	return value
+}
+
+func mustLoadEntryFieldsByNorm(t *testing.T, store *Store, ctx context.Context, from, to, norm string) (string, string, string, string) {
+	t.Helper()
+	var back, pronunciation, example, conjugation string
+	if err := store.DB().QueryRowContext(
+		ctx,
+		`SELECT back, pronunciation, example, conjugation
+		 FROM entries
+		 WHERE language_from = ? AND language_to = ? AND front_norm = ?`,
+		from,
+		to,
+		norm,
+	).Scan(&back, &pronunciation, &example, &conjugation); err != nil {
+		t.Fatalf("select entry values: %v", err)
+	}
+	return back, pronunciation, example, conjugation
 }
 
 func TestCreateCard_UsesSharedEntryAcrossUsers(t *testing.T) {

@@ -24,69 +24,85 @@ func TestNextCardForDeck_RespectsDueAndRemoved(t *testing.T) {
 		t.Fatalf("init schema: %v", err)
 	}
 
-	deck, err := store.CreateDeck(ctx, "Deck", "EN", "RU")
+	deck := mustCreateDeckForStoreTest(t, store, ctx, "Deck", "EN", "RU")
+	card := mustCreateStoreCard(t, store, ctx, deck.ID, "banished", "exiled", "/banished/", "sample", "")
+
+	assertStoreNextCardID(t, store, ctx, deck.ID, card.ID, "active")
+	mustSetStoreSchedule(t, store, ctx, card.ID, time.Now().UTC().Add(24*time.Hour), 86400, 2.5, 0, "set postponed schedule")
+	assertStoreNoNextCard(t, store, ctx, deck.ID, "postponed")
+	mustSetCardActiveNow(t, store, ctx, card.ID, time.Now().UTC().Add(-time.Hour))
+	assertStoreNextCardID(t, store, ctx, deck.ID, card.ID, "after due time")
+	mustSetStoreStatus(t, store, ctx, card.ID, domain.CardStatusRemoved)
+	assertStoreNoNextCard(t, store, ctx, deck.ID, "removed")
+}
+
+func mustCreateDeckForStoreTest(t *testing.T, store *Store, ctx context.Context, name, from, to string) domain.Deck {
+	t.Helper()
+	deck, err := store.CreateDeck(ctx, name, from, to)
 	if err != nil {
 		t.Fatalf("create deck: %v", err)
 	}
+	return deck
+}
 
+func mustCreateStoreCard(t *testing.T, store *Store, ctx context.Context, deckID int64, front, back, pron, example, conjugation string) domain.Card {
+	t.Helper()
 	card, err := store.CreateCard(ctx, CardCreateParams{
-		DeckID:        deck.ID,
-		Front:         "banished",
-		Back:          "exiled",
-		Pronunciation: "/banished/",
-		Example:       "sample",
-		Conjugation:   "",
+		DeckID:        deckID,
+		Front:         front,
+		Back:          back,
+		Pronunciation: pron,
+		Example:       example,
+		Conjugation:   conjugation,
 	})
 	if err != nil {
 		t.Fatalf("create card: %v", err)
 	}
+	return card
+}
 
-	next, err := store.NextCardForDeck(ctx, deck.ID, time.Now().UTC())
+func assertStoreNextCardID(t *testing.T, store *Store, ctx context.Context, deckID, wantID int64, label string) {
+	t.Helper()
+	next, err := store.NextCardForDeck(ctx, deckID, time.Now().UTC())
 	if err != nil {
-		t.Fatalf("next card active: %v", err)
+		t.Fatalf("next card %s: %v", label, err)
 	}
-	if next == nil || next.ID != card.ID {
-		t.Fatalf("expected card %d, got %#v", card.ID, next)
+	if next == nil || next.ID != wantID {
+		t.Fatalf("expected card %d (%s), got %#v", wantID, label, next)
 	}
+}
 
-	future := time.Now().UTC().Add(24 * time.Hour)
-	updated, err := store.UpdateCardSchedule(ctx, card.ID, future, 86400, 2.5, 0, time.Now().UTC())
-	if err != nil || !updated {
-		t.Fatalf("set postponed schedule: updated=%v err=%v", updated, err)
-	}
-
-	next, err = store.NextCardForDeck(ctx, deck.ID, time.Now().UTC())
+func assertStoreNoNextCard(t *testing.T, store *Store, ctx context.Context, deckID int64, label string) {
+	t.Helper()
+	next, err := store.NextCardForDeck(ctx, deckID, time.Now().UTC())
 	if err != nil {
-		t.Fatalf("next card postponed: %v", err)
+		t.Fatalf("next card %s: %v", label, err)
 	}
 	if next != nil {
-		t.Fatalf("expected nil while card is postponed, got %#v", next)
+		t.Fatalf("expected nil next card (%s), got %#v", label, next)
 	}
+}
 
-	past := time.Now().UTC().Add(-time.Hour)
-	updated, err = store.SetCardActiveNow(ctx, card.ID, past)
+func mustSetStoreSchedule(t *testing.T, store *Store, ctx context.Context, cardID int64, due time.Time, interval int64, ease float64, lapses int64, label string) {
+	t.Helper()
+	updated, err := store.UpdateCardSchedule(ctx, cardID, due, interval, ease, lapses, time.Now().UTC())
 	if err != nil || !updated {
-		t.Fatalf("set card due in the past: updated=%v err=%v", updated, err)
+		t.Fatalf("%s: updated=%v err=%v", label, updated, err)
 	}
+}
 
-	next, err = store.NextCardForDeck(ctx, deck.ID, time.Now().UTC())
-	if err != nil {
-		t.Fatalf("next card after due time: %v", err)
-	}
-	if next == nil || next.ID != card.ID {
-		t.Fatalf("expected card %d after due time, got %#v", card.ID, next)
-	}
-
-	updated, err = store.SetCardStatus(ctx, card.ID, domain.CardStatusRemoved)
+func mustSetCardActiveNow(t *testing.T, store *Store, ctx context.Context, cardID int64, due time.Time) {
+	t.Helper()
+	updated, err := store.SetCardActiveNow(ctx, cardID, due)
 	if err != nil || !updated {
-		t.Fatalf("set removed status: updated=%v err=%v", updated, err)
+		t.Fatalf("set card active now: updated=%v err=%v", updated, err)
 	}
+}
 
-	next, err = store.NextCardForDeck(ctx, deck.ID, time.Now().UTC())
-	if err != nil {
-		t.Fatalf("next card removed: %v", err)
-	}
-	if next != nil {
-		t.Fatalf("expected nil for removed card, got %#v", next)
+func mustSetStoreStatus(t *testing.T, store *Store, ctx context.Context, cardID int64, status domain.CardStatus) {
+	t.Helper()
+	updated, err := store.SetCardStatus(ctx, cardID, status)
+	if err != nil || !updated {
+		t.Fatalf("set card status: updated=%v err=%v", updated, err)
 	}
 }

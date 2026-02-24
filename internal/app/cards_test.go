@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"word-learning-cli/internal/domain"
 	"word-learning-cli/internal/storage/sqlite"
 )
 
@@ -398,113 +399,24 @@ func TestServiceCardLifecycle(t *testing.T) {
 	ctx := context.Background()
 	deckID := mustCreateDeck(t, svc)
 
-	card, err := svc.AddCard(ctx, deckID, " banished ", " exiled ", " /banished/ ", "  sample ", "")
-	if err != nil {
-		t.Fatalf("AddCard: %v", err)
-	}
-	if card.Front != "banished" || card.Back != "exiled" || card.Pronunciation != "/banished/" || card.Example != "sample" {
-		t.Fatalf("unexpected trimmed values: %#v", card)
-	}
+	card := mustAddLifecycleCard(t, svc, ctx, deckID)
+	assertNextCardID(t, svc, ctx, deckID, card.ID, "active")
 
-	next, err := svc.NextCard(ctx, deckID)
-	if err != nil {
-		t.Fatalf("NextCard active: %v", err)
-	}
-	if next == nil || next.ID != card.ID {
-		t.Fatalf("expected next card %d, got %#v", card.ID, next)
-	}
+	mustRememberCard(t, svc, ctx, card.ID)
+	assertNoNextCard(t, svc, ctx, deckID, "after remember")
+	assertRememberState(t, store, ctx, card.ID)
+	assertDeckStats(t, svc, ctx, deckID, 0, 1, 1, "after remember")
 
-	if err := svc.RememberCard(ctx, card.ID); err != nil {
-		t.Fatalf("RememberCard: %v", err)
-	}
+	mustDontRememberCard(t, svc, ctx, card.ID)
+	assertNoNextCard(t, svc, ctx, deckID, "after dont-remember")
+	assertDontRememberState(t, store, ctx, card.ID)
 
-	next, err = svc.NextCard(ctx, deckID)
-	if err != nil {
-		t.Fatalf("NextCard after remember: %v", err)
-	}
-	if next != nil {
-		t.Fatalf("expected no card while due date is in future, got %#v", next)
-	}
+	mustRemoveCard(t, svc, ctx, card.ID)
+	assertRemovedCardListed(t, svc, ctx, deckID, card.ID)
+	assertDeckStats(t, svc, ctx, deckID, 0, 0, 0, "after remove")
 
-	stored, err := store.GetCardByID(ctx, card.ID)
-	if err != nil {
-		t.Fatalf("GetCardByID after remember: %v", err)
-	}
-	if stored == nil {
-		t.Fatal("expected card after remember")
-	}
-	if stored.IntervalSec < 86400 {
-		t.Fatalf("expected interval >= 1 day, got %d", stored.IntervalSec)
-	}
-	if stored.LastReviewedAt == nil {
-		t.Fatal("expected last_reviewed_at after remember")
-	}
-	if !stored.NextDueAt.After(time.Now().UTC()) {
-		t.Fatalf("expected future next_due_at, got %v", stored.NextDueAt)
-	}
-
-	_, stats, err := svc.NextCardWithStats(ctx, deckID)
-	if err != nil {
-		t.Fatalf("NextCardWithStats after remember: %v", err)
-	}
-	if stats.Active != 0 || stats.Postponed != 1 || stats.Total != 1 {
-		t.Fatalf("unexpected stats after remember: %#v", stats)
-	}
-
-	if err := svc.DontRememberCard(ctx, card.ID); err != nil {
-		t.Fatalf("DontRememberCard: %v", err)
-	}
-
-	next, err = svc.NextCard(ctx, deckID)
-	if err != nil {
-		t.Fatalf("NextCard after dont-remember: %v", err)
-	}
-	if next != nil {
-		t.Fatalf("expected no card immediately after dont-remember short interval, got %#v", next)
-	}
-
-	stored, err = store.GetCardByID(ctx, card.ID)
-	if err != nil {
-		t.Fatalf("GetCardByID after dont-remember: %v", err)
-	}
-	if stored.Lapses != 1 {
-		t.Fatalf("expected lapses=1, got %d", stored.Lapses)
-	}
-	if stored.IntervalSec != 600 {
-		t.Fatalf("expected interval_sec=600, got %d", stored.IntervalSec)
-	}
-
-	if err := svc.RemoveCard(ctx, card.ID); err != nil {
-		t.Fatalf("RemoveCard: %v", err)
-	}
-
-	cards, err := svc.ListCards(ctx, deckID, "removed")
-	if err != nil {
-		t.Fatalf("ListCards removed: %v", err)
-	}
-	if len(cards) != 1 || cards[0].ID != card.ID {
-		t.Fatalf("expected removed card %d, got %#v", card.ID, cards)
-	}
-
-	_, stats, err = svc.NextCardWithStats(ctx, deckID)
-	if err != nil {
-		t.Fatalf("NextCardWithStats after remove: %v", err)
-	}
-	if stats.Active != 0 || stats.Postponed != 0 || stats.Total != 0 {
-		t.Fatalf("unexpected stats after remove: %#v", stats)
-	}
-
-	if err := svc.RestoreCard(ctx, card.ID); err != nil {
-		t.Fatalf("RestoreCard: %v", err)
-	}
-
-	next, err = svc.NextCard(ctx, deckID)
-	if err != nil {
-		t.Fatalf("NextCard after restore: %v", err)
-	}
-	if next == nil || next.ID != card.ID {
-		t.Fatalf("expected restored card %d to be due now, got %#v", card.ID, next)
-	}
+	mustRestoreCard(t, svc, ctx, card.ID)
+	assertNextCardID(t, svc, ctx, deckID, card.ID, "after restore")
 }
 
 func TestServiceCardValidationAndNotFound(t *testing.T) {
@@ -616,52 +528,190 @@ func TestSharedEntryAndIndependentProgress(t *testing.T) {
 	svc, store := newTestService(t)
 	ctx := context.Background()
 
-	deck1, err := svc.CreateDeckForUser(ctx, 101, "U1", "EN", "RU")
-	if err != nil {
-		t.Fatalf("CreateDeckForUser u1: %v", err)
-	}
-	deck2, err := svc.CreateDeckForUser(ctx, 202, "U2", "EN", "RU")
-	if err != nil {
-		t.Fatalf("CreateDeckForUser u2: %v", err)
-	}
+	deck1 := mustCreateUserDeck(t, svc, ctx, 101, "U1", "EN", "RU")
+	deck2 := mustCreateUserDeck(t, svc, ctx, 202, "U2", "EN", "RU")
 
-	c1, err := svc.AddCardForUser(ctx, 101, deck1.ID, "banished", "old", "", "", "")
-	if err != nil {
-		t.Fatalf("AddCardForUser u1: %v", err)
-	}
-	c2, err := svc.AddCardForUser(ctx, 202, deck2.ID, "banished", "new", "", "updated", "")
-	if err != nil {
-		t.Fatalf("AddCardForUser u2: %v", err)
-	}
-	if c1.EntryID == 0 || c2.EntryID == 0 || c1.EntryID != c2.EntryID {
-		t.Fatalf("expected shared entry id, got c1=%d c2=%d", c1.EntryID, c2.EntryID)
-	}
+	c1 := mustAddUserCard(t, svc, ctx, 101, deck1.ID, "banished", "old", "", "", "")
+	c2 := mustAddUserCard(t, svc, ctx, 202, deck2.ID, "banished", "new", "", "updated", "")
+	assertSharedEntry(t, c1.EntryID, c2.EntryID)
+	assertSharedLatestContent(t, store, ctx, c1.ID, "new", "updated")
+	assertIndependentProgress(t, svc, store, ctx, 101, c1.ID, c2.ID)
+}
 
-	// Shared entry: latest content visible to both users.
-	reload1, err := store.GetCardByID(ctx, c1.ID)
+func mustAddLifecycleCard(t *testing.T, svc *Service, ctx context.Context, deckID int64) domain.Card {
+	t.Helper()
+	card, err := svc.AddCard(ctx, deckID, " banished ", " exiled ", " /banished/ ", "  sample ", "")
 	if err != nil {
-		t.Fatalf("GetCardByID c1: %v", err)
+		t.Fatalf("AddCard: %v", err)
 	}
-	if reload1 == nil || reload1.Back != "new" || reload1.Example != "updated" {
-		t.Fatalf("expected shared latest entry on c1, got %#v", reload1)
+	if card.Front != "banished" || card.Back != "exiled" || card.Pronunciation != "/banished/" || card.Example != "sample" {
+		t.Fatalf("unexpected trimmed values: %#v", card)
 	}
+	return card
+}
 
-	// Progress remains independent per user card row.
-	if err := svc.RememberCardForUser(ctx, 101, c1.ID); err != nil {
-		t.Fatalf("RememberCardForUser u1: %v", err)
-	}
-	u1Card, err := store.GetCardByID(ctx, c1.ID)
+func assertNextCardID(t *testing.T, svc *Service, ctx context.Context, deckID, wantID int64, label string) {
+	t.Helper()
+	next, err := svc.NextCard(ctx, deckID)
 	if err != nil {
-		t.Fatalf("GetCardByID u1: %v", err)
+		t.Fatalf("NextCard %s: %v", label, err)
 	}
-	u2Card, err := store.GetCardByID(ctx, c2.ID)
+	if next == nil || next.ID != wantID {
+		t.Fatalf("expected next card %d (%s), got %#v", wantID, label, next)
+	}
+}
+
+func assertNoNextCard(t *testing.T, svc *Service, ctx context.Context, deckID int64, label string) {
+	t.Helper()
+	next, err := svc.NextCard(ctx, deckID)
 	if err != nil {
-		t.Fatalf("GetCardByID u2: %v", err)
+		t.Fatalf("NextCard %s: %v", label, err)
 	}
-	if u1Card == nil || u2Card == nil {
-		t.Fatalf("expected cards for both users: u1=%#v u2=%#v", u1Card, u2Card)
+	if next != nil {
+		t.Fatalf("expected no due card %s, got %#v", label, next)
 	}
-	if u1Card.IntervalSec == u2Card.IntervalSec && u1Card.NextDueAt.Equal(u2Card.NextDueAt) {
-		t.Fatalf("expected independent progress, got u1=%#v u2=%#v", u1Card, u2Card)
+}
+
+func mustRememberCard(t *testing.T, svc *Service, ctx context.Context, cardID int64) {
+	t.Helper()
+	if err := svc.RememberCard(ctx, cardID); err != nil {
+		t.Fatalf("RememberCard: %v", err)
+	}
+}
+
+func assertRememberState(t *testing.T, store *sqlite.Store, ctx context.Context, cardID int64) {
+	t.Helper()
+	stored, err := store.GetCardByID(ctx, cardID)
+	if err != nil {
+		t.Fatalf("GetCardByID after remember: %v", err)
+	}
+	if stored == nil {
+		t.Fatal("expected card after remember")
+	}
+	if stored.IntervalSec < 86400 {
+		t.Fatalf("expected interval >= 1 day, got %d", stored.IntervalSec)
+	}
+	if stored.LastReviewedAt == nil {
+		t.Fatal("expected last_reviewed_at after remember")
+	}
+	if !stored.NextDueAt.After(time.Now().UTC()) {
+		t.Fatalf("expected future next_due_at, got %v", stored.NextDueAt)
+	}
+}
+
+func assertDeckStats(t *testing.T, svc *Service, ctx context.Context, deckID, active, postponed, total int64, label string) {
+	t.Helper()
+	_, stats, err := svc.NextCardWithStats(ctx, deckID)
+	if err != nil {
+		t.Fatalf("NextCardWithStats %s: %v", label, err)
+	}
+	if stats.Active != active || stats.Postponed != postponed || stats.Total != total {
+		t.Fatalf("unexpected stats %s: %#v", label, stats)
+	}
+}
+
+func mustDontRememberCard(t *testing.T, svc *Service, ctx context.Context, cardID int64) {
+	t.Helper()
+	if err := svc.DontRememberCard(ctx, cardID); err != nil {
+		t.Fatalf("DontRememberCard: %v", err)
+	}
+}
+
+func assertDontRememberState(t *testing.T, store *sqlite.Store, ctx context.Context, cardID int64) {
+	t.Helper()
+	stored, err := store.GetCardByID(ctx, cardID)
+	if err != nil {
+		t.Fatalf("GetCardByID after dont-remember: %v", err)
+	}
+	if stored == nil {
+		t.Fatal("expected card after dont-remember")
+	}
+	if stored.Lapses != 1 {
+		t.Fatalf("expected lapses=1, got %d", stored.Lapses)
+	}
+	if stored.IntervalSec != 600 {
+		t.Fatalf("expected interval_sec=600, got %d", stored.IntervalSec)
+	}
+}
+
+func mustRemoveCard(t *testing.T, svc *Service, ctx context.Context, cardID int64) {
+	t.Helper()
+	if err := svc.RemoveCard(ctx, cardID); err != nil {
+		t.Fatalf("RemoveCard: %v", err)
+	}
+}
+
+func assertRemovedCardListed(t *testing.T, svc *Service, ctx context.Context, deckID, cardID int64) {
+	t.Helper()
+	cards, err := svc.ListCards(ctx, deckID, "removed")
+	if err != nil {
+		t.Fatalf("ListCards removed: %v", err)
+	}
+	if len(cards) != 1 || cards[0].ID != cardID {
+		t.Fatalf("expected removed card %d, got %#v", cardID, cards)
+	}
+}
+
+func mustRestoreCard(t *testing.T, svc *Service, ctx context.Context, cardID int64) {
+	t.Helper()
+	if err := svc.RestoreCard(ctx, cardID); err != nil {
+		t.Fatalf("RestoreCard: %v", err)
+	}
+}
+
+func mustCreateUserDeck(t *testing.T, svc *Service, ctx context.Context, userID int64, name, from, to string) domain.Deck {
+	t.Helper()
+	deck, err := svc.CreateDeckForUser(ctx, userID, name, from, to)
+	if err != nil {
+		t.Fatalf("CreateDeckForUser %s: %v", name, err)
+	}
+	return deck
+}
+
+func mustAddUserCard(t *testing.T, svc *Service, ctx context.Context, userID, deckID int64, front, back, pron, example, conjugation string) domain.Card {
+	t.Helper()
+	card, err := svc.AddCardForUser(ctx, userID, deckID, front, back, pron, example, conjugation)
+	if err != nil {
+		t.Fatalf("AddCardForUser user=%d: %v", userID, err)
+	}
+	return card
+}
+
+func assertSharedEntry(t *testing.T, leftEntryID, rightEntryID int64) {
+	t.Helper()
+	if leftEntryID == 0 || rightEntryID == 0 || leftEntryID != rightEntryID {
+		t.Fatalf("expected shared entry id, got left=%d right=%d", leftEntryID, rightEntryID)
+	}
+}
+
+func assertSharedLatestContent(t *testing.T, store *sqlite.Store, ctx context.Context, cardID int64, wantBack, wantExample string) {
+	t.Helper()
+	reloaded, err := store.GetCardByID(ctx, cardID)
+	if err != nil {
+		t.Fatalf("GetCardByID shared content: %v", err)
+	}
+	if reloaded == nil || reloaded.Back != wantBack || reloaded.Example != wantExample {
+		t.Fatalf("expected shared latest content back=%q example=%q, got %#v", wantBack, wantExample, reloaded)
+	}
+}
+
+func assertIndependentProgress(t *testing.T, svc *Service, store *sqlite.Store, ctx context.Context, userID, leftCardID, rightCardID int64) {
+	t.Helper()
+	if err := svc.RememberCardForUser(ctx, userID, leftCardID); err != nil {
+		t.Fatalf("RememberCardForUser user=%d: %v", userID, err)
+	}
+	left, err := store.GetCardByID(ctx, leftCardID)
+	if err != nil {
+		t.Fatalf("GetCardByID left: %v", err)
+	}
+	right, err := store.GetCardByID(ctx, rightCardID)
+	if err != nil {
+		t.Fatalf("GetCardByID right: %v", err)
+	}
+	if left == nil || right == nil {
+		t.Fatalf("expected both cards, left=%#v right=%#v", left, right)
+	}
+	if left.IntervalSec == right.IntervalSec && left.NextDueAt.Equal(right.NextDueAt) {
+		t.Fatalf("expected independent progress, left=%#v right=%#v", left, right)
 	}
 }
