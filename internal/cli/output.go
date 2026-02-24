@@ -5,18 +5,6 @@ import (
 	"word-learning-cli/internal/domain"
 )
 
-func printDecks(decks []domain.Deck) {
-	if len(decks) == 0 {
-		fmt.Println("No decks yet.")
-		return
-	}
-
-	fmt.Println("ID\tNAME\tFROM\tTO")
-	for _, deck := range decks {
-		fmt.Printf("%d\t%s\t%s\t%s\n", deck.ID, deck.Name, deck.LanguageFrom, deck.LanguageTo)
-	}
-}
-
 func printDecksAll(decks []domain.Deck) {
 	if len(decks) == 0 {
 		fmt.Println("No decks yet.")

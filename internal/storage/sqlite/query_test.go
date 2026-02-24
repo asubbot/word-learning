@@ -247,6 +247,71 @@ func TestDeckOwnerIsolation(t *testing.T) {
 	}
 }
 
+func TestListDecksAll(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	d0, err := store.CreateDeck(ctx, "CLI Deck", "EN", "RU")
+	if err != nil {
+		t.Fatalf("CreateDeck: %v", err)
+	}
+	d1, err := store.CreateDeckForOwner(ctx, 101, "Owner1", "EN", "DE")
+	if err != nil {
+		t.Fatalf("CreateDeckForOwner 101: %v", err)
+	}
+	d2, err := store.CreateDeckForOwner(ctx, 202, "Owner2", "DE", "RU")
+	if err != nil {
+		t.Fatalf("CreateDeckForOwner 202: %v", err)
+	}
+
+	all, err := store.ListDecksAll(ctx)
+	if err != nil {
+		t.Fatalf("ListDecksAll: %v", err)
+	}
+	if len(all) != 3 {
+		t.Fatalf("expected 3 decks, got %d", len(all))
+	}
+	if all[0].ID != d0.ID || all[0].TelegramUserID != 0 || all[0].Name != "CLI Deck" {
+		t.Fatalf("unexpected first deck: %#v", all[0])
+	}
+	if all[1].ID != d1.ID || all[1].TelegramUserID != 101 {
+		t.Fatalf("unexpected second deck: %#v", all[1])
+	}
+	if all[2].ID != d2.ID || all[2].TelegramUserID != 202 {
+		t.Fatalf("unexpected third deck: %#v", all[2])
+	}
+}
+
+func TestGetDeckByID(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	d1, err := store.CreateDeckForOwner(ctx, 101, "Deck1", "EN", "RU")
+	if err != nil {
+		t.Fatalf("CreateDeckForOwner: %v", err)
+	}
+
+	got, err := store.GetDeckByID(ctx, d1.ID)
+	if err != nil {
+		t.Fatalf("GetDeckByID: %v", err)
+	}
+	if got == nil || got.ID != d1.ID || got.TelegramUserID != 101 || got.Name != "Deck1" {
+		t.Fatalf("unexpected deck: %#v", got)
+	}
+
+	missing, err := store.GetDeckByID(ctx, d1.ID+9999)
+	if err != nil {
+		t.Fatalf("GetDeckByID missing: %v", err)
+	}
+	if missing != nil {
+		t.Fatalf("expected nil for missing deck, got %#v", missing)
+	}
+}
+
 func TestCardFrontExistsInDeckForOwner(t *testing.T) {
 	t.Parallel()
 

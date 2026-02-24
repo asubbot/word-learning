@@ -82,8 +82,8 @@ func NewGeneratorFromEnv() (Generator, error) {
 }
 
 const systemPrompt = `You generate flashcard fields for a word or phrase.
-- "back": translation into language_to.
-- "pronunciation": pronunciation of the word/phrase in language_from using IPA (International Phonetic Alphabet) only, e.g. /bænɪʃt/ for English. Use slashes for broad transcription.
+- "back": translation into language_to. For single words use the main equivalent. For phrases, idioms, or fixed expressions use the natural, idiomatic equivalent (how a native would say it), never a literal word-for-word translation. Example: EN "Is that so" → RU "Неужели?" or "Правда?", not "Так ли это". One concise back; if several variants exist, give the most common.
+- "pronunciation": pronunciation of the word/phrase in language_from using IPA only, e.g. /bænɪʃt/ for English. Use slashes for broad transcription.
 - "description": one short usage example sentence in language_from that contains the word/phrase (no translation).
 Return strict JSON only: {"back":"...","pronunciation":"...","description":"..."}. No markdown, no extra text.`
 

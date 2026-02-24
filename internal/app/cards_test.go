@@ -84,6 +84,228 @@ func TestServiceDeckValidation(t *testing.T) {
 	}
 }
 
+func TestListDecksAll(t *testing.T) {
+	t.Parallel()
+
+	svc, store := newTestService(t)
+	ctx := context.Background()
+
+	if _, err := svc.CreateDeck(ctx, "CLI Deck", "en", "ru"); err != nil {
+		t.Fatalf("CreateDeck: %v", err)
+	}
+	if _, err := store.CreateDeckForOwner(ctx, 101, "Bot Deck", "EN", "RU"); err != nil {
+		t.Fatalf("CreateDeckForOwner: %v", err)
+	}
+
+	all, err := svc.ListDecksAll(ctx)
+	if err != nil {
+		t.Fatalf("ListDecksAll: %v", err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("expected 2 decks, got %d", len(all))
+	}
+}
+
+func TestGetDeckByID(t *testing.T) {
+	t.Parallel()
+
+	svc, store := newTestService(t)
+	ctx := context.Background()
+
+	_, _ = svc.CreateDeck(ctx, "CLI", "en", "ru")
+	botDeck, err := store.CreateDeckForOwner(ctx, 101, "Bot", "EN", "RU")
+	if err != nil {
+		t.Fatalf("CreateDeckForOwner: %v", err)
+	}
+
+	got, err := svc.GetDeckByID(ctx, botDeck.ID)
+	if err != nil {
+		t.Fatalf("GetDeckByID: %v", err)
+	}
+	if got == nil || got.ID != botDeck.ID || got.TelegramUserID != 101 {
+		t.Fatalf("unexpected deck: %#v", got)
+	}
+
+	missing, err := svc.GetDeckByID(ctx, 99999)
+	if err != nil {
+		t.Fatalf("GetDeckByID missing: %v", err)
+	}
+	if missing != nil {
+		t.Fatalf("expected nil for missing deck, got %#v", missing)
+	}
+}
+
+func TestAddCardToDeck_AndListCardsInDeck(t *testing.T) {
+	t.Parallel()
+
+	svc, store := newTestService(t)
+	ctx := context.Background()
+
+	botDeck, err := store.CreateDeckForOwner(ctx, 101, "Bot", "EN", "RU")
+	if err != nil {
+		t.Fatalf("CreateDeckForOwner: %v", err)
+	}
+
+	card, err := svc.AddCardToDeck(ctx, botDeck.ID, "word", "перевод", "/w/", "example")
+	if err != nil {
+		t.Fatalf("AddCardToDeck: %v", err)
+	}
+	if card.DeckID != botDeck.ID || card.Front != "word" {
+		t.Fatalf("unexpected card: %#v", card)
+	}
+
+	cards, err := svc.ListCardsInDeck(ctx, botDeck.ID, "active")
+	if err != nil {
+		t.Fatalf("ListCardsInDeck: %v", err)
+	}
+	if len(cards) != 1 || cards[0].ID != card.ID {
+		t.Fatalf("expected one card, got %#v", cards)
+	}
+}
+
+func TestRemoveCardByID(t *testing.T) {
+	t.Parallel()
+
+	svc, store := newTestService(t)
+	ctx := context.Background()
+
+	botDeck, err := store.CreateDeckForOwner(ctx, 101, "Bot", "EN", "RU")
+	if err != nil {
+		t.Fatalf("CreateDeckForOwner: %v", err)
+	}
+	card, err := svc.AddCardToDeck(ctx, botDeck.ID, "word", "back", "", "")
+	if err != nil {
+		t.Fatalf("AddCardToDeck: %v", err)
+	}
+
+	if err := svc.RemoveCardByID(ctx, card.ID); err != nil {
+		t.Fatalf("RemoveCardByID: %v", err)
+	}
+
+	cards, err := svc.ListCardsInDeck(ctx, botDeck.ID, "removed")
+	if err != nil {
+		t.Fatalf("ListCardsInDeck: %v", err)
+	}
+	if len(cards) != 1 || cards[0].Status != "removed" {
+		t.Fatalf("expected one removed card, got %#v", cards)
+	}
+}
+
+func TestNextCardWithStatsInDeck(t *testing.T) {
+	t.Parallel()
+
+	svc, store := newTestService(t)
+	ctx := context.Background()
+
+	botDeck, err := store.CreateDeckForOwner(ctx, 101, "Bot", "EN", "RU")
+	if err != nil {
+		t.Fatalf("CreateDeckForOwner: %v", err)
+	}
+	card, err := svc.AddCardToDeck(ctx, botDeck.ID, "word", "back", "", "")
+	if err != nil {
+		t.Fatalf("AddCardToDeck: %v", err)
+	}
+
+	next, stats, err := svc.NextCardWithStatsInDeck(ctx, botDeck.ID)
+	if err != nil {
+		t.Fatalf("NextCardWithStatsInDeck: %v", err)
+	}
+	if next == nil || next.ID != card.ID {
+		t.Fatalf("expected next card %d, got %#v", card.ID, next)
+	}
+	if stats.Active != 1 || stats.Total != 1 {
+		t.Fatalf("unexpected stats: %+v", stats)
+	}
+}
+
+func TestRestoreCardByID(t *testing.T) {
+	t.Parallel()
+
+	svc, store := newTestService(t)
+	ctx := context.Background()
+
+	botDeck, err := store.CreateDeckForOwner(ctx, 101, "Bot", "EN", "RU")
+	if err != nil {
+		t.Fatalf("CreateDeckForOwner: %v", err)
+	}
+	card, err := svc.AddCardToDeck(ctx, botDeck.ID, "word", "back", "", "")
+	if err != nil {
+		t.Fatalf("AddCardToDeck: %v", err)
+	}
+	if err := svc.RemoveCardByID(ctx, card.ID); err != nil {
+		t.Fatalf("RemoveCardByID: %v", err)
+	}
+
+	if err := svc.RestoreCardByID(ctx, card.ID); err != nil {
+		t.Fatalf("RestoreCardByID: %v", err)
+	}
+
+	cards, err := svc.ListCardsInDeck(ctx, botDeck.ID, "active")
+	if err != nil {
+		t.Fatalf("ListCardsInDeck: %v", err)
+	}
+	if len(cards) != 1 || cards[0].Status != "active" {
+		t.Fatalf("expected one active card after restore, got %#v", cards)
+	}
+}
+
+func TestRememberCardByID(t *testing.T) {
+	t.Parallel()
+
+	svc, store := newTestService(t)
+	ctx := context.Background()
+
+	botDeck, err := store.CreateDeckForOwner(ctx, 101, "Bot", "EN", "RU")
+	if err != nil {
+		t.Fatalf("CreateDeckForOwner: %v", err)
+	}
+	card, err := svc.AddCardToDeck(ctx, botDeck.ID, "word", "back", "", "")
+	if err != nil {
+		t.Fatalf("AddCardToDeck: %v", err)
+	}
+
+	if err := svc.RememberCardByID(ctx, card.ID); err != nil {
+		t.Fatalf("RememberCardByID: %v", err)
+	}
+
+	next, _, err := svc.NextCardWithStatsInDeck(ctx, botDeck.ID)
+	if err != nil {
+		t.Fatalf("NextCardWithStatsInDeck: %v", err)
+	}
+	if next != nil {
+		t.Fatalf("expected no due card after remember (interval in future), got %#v", next)
+	}
+}
+
+func TestDontRememberCardByID(t *testing.T) {
+	t.Parallel()
+
+	svc, store := newTestService(t)
+	ctx := context.Background()
+
+	botDeck, err := store.CreateDeckForOwner(ctx, 101, "Bot", "EN", "RU")
+	if err != nil {
+		t.Fatalf("CreateDeckForOwner: %v", err)
+	}
+	card, err := svc.AddCardToDeck(ctx, botDeck.ID, "word", "back", "", "")
+	if err != nil {
+		t.Fatalf("AddCardToDeck: %v", err)
+	}
+
+	if err := svc.DontRememberCardByID(ctx, card.ID); err != nil {
+		t.Fatalf("DontRememberCardByID: %v", err)
+	}
+
+	// Card should still be in deck; status unchanged (scheduler updated)
+	cards, err := svc.ListCardsInDeck(ctx, botDeck.ID, "active")
+	if err != nil {
+		t.Fatalf("ListCardsInDeck: %v", err)
+	}
+	if len(cards) != 1 || cards[0].ID != card.ID {
+		t.Fatalf("expected one active card after dont-remember, got %#v", cards)
+	}
+}
+
 func TestServiceCardLifecycle(t *testing.T) {
 	t.Parallel()
 

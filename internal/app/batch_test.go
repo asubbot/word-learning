@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"word-learning-cli/internal/ai"
@@ -237,5 +238,70 @@ func TestAddCardsBatchAIForUser_DryRunNoPersistence(t *testing.T) {
 	}
 	if len(cards) != 0 {
 		t.Fatalf("expected no persisted cards in dry-run, got %d", len(cards))
+	}
+}
+
+func TestAddCardsBatchAIToDeck_BotDeck(t *testing.T) {
+	t.Parallel()
+
+	svc, store := newTestService(t)
+	ctx := context.Background()
+	botDeck, err := store.CreateDeckForOwner(ctx, 101, "Bot Deck", "EN", "RU")
+	if err != nil {
+		t.Fatalf("CreateDeckForOwner: %v", err)
+	}
+	generator := fakeGenerator{
+		generate: func(req ai.GenerateCardRequest) (ai.GeneratedCard, error) {
+			return ai.GeneratedCard{
+				Back:          "translated-" + req.Front,
+				Pronunciation: "/p/",
+				Description:   "d",
+			}, nil
+		},
+	}
+
+	report, err := svc.AddCardsBatchAIToDeck(ctx, generator, BatchAddAIParams{
+		DeckID: botDeck.ID,
+		Lines:  []string{"word1", "word2"},
+		Mode:   BatchModeCLI,
+		DryRun: false,
+	})
+	if err != nil {
+		t.Fatalf("AddCardsBatchAIToDeck: %v", err)
+	}
+	if report.Summary.Total != 2 || report.Summary.Created != 2 || report.Summary.Failed != 0 {
+		t.Fatalf("unexpected summary: %#v", report.Summary)
+	}
+
+	cards, err := svc.ListCardsInDeck(ctx, botDeck.ID, "active")
+	if err != nil {
+		t.Fatalf("ListCardsInDeck: %v", err)
+	}
+	if len(cards) != 2 {
+		t.Fatalf("expected 2 cards in bot deck, got %d", len(cards))
+	}
+}
+
+func TestAddCardsBatchAIToDeck_DeckNotFound(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+	generator := fakeGenerator{
+		generate: func(req ai.GenerateCardRequest) (ai.GeneratedCard, error) {
+			return ai.GeneratedCard{Back: "x"}, nil
+		},
+	}
+
+	_, err := svc.AddCardsBatchAIToDeck(ctx, generator, BatchAddAIParams{
+		DeckID: 99999,
+		Lines:  []string{"word"},
+		Mode:   BatchModeCLI,
+	})
+	if err == nil {
+		t.Fatal("expected error for non-existent deck")
+	}
+	if !strings.Contains(err.Error(), "99999") || !strings.Contains(err.Error(), "does not exist") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
