@@ -75,7 +75,7 @@ go run ./cmd/wordcli card dont-remember --id 1
 
 ### Global flags
 
-- `--db <path>` - path to the SQLite DB file (default: `wordcli.db` in current directory).
+- `--db <path>` - path to the SQLite DB file.
 - `-h, --help` - show help.
 
 ### Deck
@@ -111,9 +111,16 @@ go run ./cmd/wordcli card dont-remember --id 1
 
 ## Database Usage
 
-By default, the tool uses `wordcli.db` in the current directory. You can set a custom path:
+DB path resolution order is:
+1. `--db` command-line flag
+2. `WORDCLI_DB_PATH` environment variable
+3. if neither is set, process exits with an error
+
+Examples:
 
 ```bash
+export WORDCLI_DB_PATH=./bot.db
+go run ./cmd/wordcli deck list
 go run ./cmd/wordcli --db ./data/mywords.db deck list
 ```
 
@@ -145,7 +152,7 @@ The project also includes a Telegram bot binary that reuses the same app/storage
 ### Required environment variables
 
 - `TELEGRAM_BOT_TOKEN` - Telegram bot token from BotFather.
-- `WORDCLI_DB_PATH` - SQLite DB path (optional, default: `./wordcli.db`).
+- `WORDCLI_DB_PATH` - SQLite DB path (required unless `--db` is passed).
 - `TELEGRAM_POLLING_TIMEOUT` - long-poll timeout in seconds (optional, default: `30`).
 - `BOT_ALLOWED_USER_IDS` - optional comma-separated allowlist of Telegram user IDs.
 
@@ -155,6 +162,7 @@ The project also includes a Telegram bot binary that reuses the same app/storage
 export TELEGRAM_BOT_TOKEN="<your_token>"
 export WORDCLI_DB_PATH="./bot.db"
 go run ./cmd/wordbot
+go run ./cmd/wordbot --db ./bot.db
 ```
 
 ### Bot commands

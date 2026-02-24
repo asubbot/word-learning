@@ -3,7 +3,6 @@ package bot
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -15,19 +14,18 @@ type Config struct {
 	AllowedUserIDs   []int64
 }
 
-func LoadConfigFromEnv() (Config, error) {
+func LoadConfigFromEnv(dbPathFlag string) (Config, error) {
 	token := strings.TrimSpace(os.Getenv("TELEGRAM_BOT_TOKEN"))
 	if token == "" {
 		return Config{}, fmt.Errorf("TELEGRAM_BOT_TOKEN is required")
 	}
 
-	dbPath := strings.TrimSpace(os.Getenv("WORDCLI_DB_PATH"))
+	dbPath := strings.TrimSpace(dbPathFlag)
 	if dbPath == "" {
-		cwd, err := os.Getwd()
-		if err != nil {
-			return Config{}, fmt.Errorf("resolve working directory: %w", err)
-		}
-		dbPath = filepath.Join(cwd, "wordcli.db")
+		dbPath = strings.TrimSpace(os.Getenv("WORDCLI_DB_PATH"))
+	}
+	if dbPath == "" {
+		return Config{}, fmt.Errorf("database path is required: pass --db or set WORDCLI_DB_PATH")
 	}
 
 	pollingTimeout := 30

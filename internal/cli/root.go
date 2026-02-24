@@ -4,10 +4,13 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"word-learning-cli/internal/storage/sqlite"
 )
+
+const dbPathEnvVar = "WORDCLI_DB_PATH"
 
 func newRootCmd() *cobra.Command {
 	ctx := &commandContext{}
@@ -16,6 +19,12 @@ func newRootCmd() *cobra.Command {
 		Use:   "wordcli",
 		Short: "CLI tool to study foreign words",
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			dbPath, err := resolveDBPath(ctx.DBPath)
+			if err != nil {
+				return err
+			}
+			ctx.DBPath = dbPath
+
 			store, err := sqlite.Open(ctx.DBPath)
 			if err != nil {
 				return err
@@ -35,19 +44,21 @@ func newRootCmd() *cobra.Command {
 		},
 	}
 
-	rootCmd.PersistentFlags().StringVar(&ctx.DBPath, "db", defaultDBPath(), "Path to SQLite database file")
+	rootCmd.PersistentFlags().StringVar(&ctx.DBPath, "db", "", "Path to SQLite database file")
 	rootCmd.AddCommand(newDeckCmd(ctx))
 	rootCmd.AddCommand(newCardCmd(ctx))
 
 	return rootCmd
 }
 
-func defaultDBPath() string {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return "wordcli.db"
+func resolveDBPath(flagValue string) (string, error) {
+	if v := strings.TrimSpace(flagValue); v != "" {
+		return v, nil
 	}
-	return fmt.Sprintf("%s/%s", cwd, "wordcli.db")
+	if v := strings.TrimSpace(os.Getenv(dbPathEnvVar)); v != "" {
+		return v, nil
+	}
+	return "", fmt.Errorf("database path is required: pass --db or set %s", dbPathEnvVar)
 }
 
 func Execute() error {

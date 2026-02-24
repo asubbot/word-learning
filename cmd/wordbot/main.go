@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -11,9 +12,13 @@ import (
 )
 
 func main() {
+	var dbPath string
+	flag.StringVar(&dbPath, "db", "", "Path to SQLite database file")
+	flag.Parse()
+
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
-	cfg, err := bot.LoadConfigFromEnv()
+	cfg, err := bot.LoadConfigFromEnv(dbPath)
 	if err != nil {
 		logger.Error("load config", "error", err)
 		os.Exit(1)
