@@ -609,3 +609,59 @@ func TestServiceOwnerIsolation(t *testing.T) {
 		t.Fatalf("expected ErrCardNotFound for foreign remove, got %v", err)
 	}
 }
+
+func TestSharedEntryAndIndependentProgress(t *testing.T) {
+	t.Parallel()
+
+	svc, store := newTestService(t)
+	ctx := context.Background()
+
+	deck1, err := svc.CreateDeckForUser(ctx, 101, "U1", "EN", "RU")
+	if err != nil {
+		t.Fatalf("CreateDeckForUser u1: %v", err)
+	}
+	deck2, err := svc.CreateDeckForUser(ctx, 202, "U2", "EN", "RU")
+	if err != nil {
+		t.Fatalf("CreateDeckForUser u2: %v", err)
+	}
+
+	c1, err := svc.AddCardForUser(ctx, 101, deck1.ID, "banished", "old", "", "", "")
+	if err != nil {
+		t.Fatalf("AddCardForUser u1: %v", err)
+	}
+	c2, err := svc.AddCardForUser(ctx, 202, deck2.ID, "banished", "new", "", "updated", "")
+	if err != nil {
+		t.Fatalf("AddCardForUser u2: %v", err)
+	}
+	if c1.EntryID == 0 || c2.EntryID == 0 || c1.EntryID != c2.EntryID {
+		t.Fatalf("expected shared entry id, got c1=%d c2=%d", c1.EntryID, c2.EntryID)
+	}
+
+	// Shared entry: latest content visible to both users.
+	reload1, err := store.GetCardByID(ctx, c1.ID)
+	if err != nil {
+		t.Fatalf("GetCardByID c1: %v", err)
+	}
+	if reload1 == nil || reload1.Back != "new" || reload1.Example != "updated" {
+		t.Fatalf("expected shared latest entry on c1, got %#v", reload1)
+	}
+
+	// Progress remains independent per user card row.
+	if err := svc.RememberCardForUser(ctx, 101, c1.ID); err != nil {
+		t.Fatalf("RememberCardForUser u1: %v", err)
+	}
+	u1Card, err := store.GetCardByID(ctx, c1.ID)
+	if err != nil {
+		t.Fatalf("GetCardByID u1: %v", err)
+	}
+	u2Card, err := store.GetCardByID(ctx, c2.ID)
+	if err != nil {
+		t.Fatalf("GetCardByID u2: %v", err)
+	}
+	if u1Card == nil || u2Card == nil {
+		t.Fatalf("expected cards for both users: u1=%#v u2=%#v", u1Card, u2Card)
+	}
+	if u1Card.IntervalSec == u2Card.IntervalSec && u1Card.NextDueAt.Equal(u2Card.NextDueAt) {
+		t.Fatalf("expected independent progress, got u1=%#v u2=%#v", u1Card, u2Card)
+	}
+}

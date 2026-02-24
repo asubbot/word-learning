@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"word-learning-cli/internal/domain"
@@ -42,9 +43,10 @@ func (s *Store) CardFrontExistsInDeckForOwner(ctx context.Context, deckID int64,
 			SELECT 1
 			FROM cards c
 			INNER JOIN decks d ON d.id = c.deck_id
+			INNER JOIN entries e ON e.id = c.entry_id
 			WHERE c.deck_id = ?
 			  AND d.telegram_user_id = ?
-			  AND lower(trim(c.front)) = lower(trim(?))
+			  AND e.front_norm = lower(trim(?))
 		)`,
 		deckID,
 		telegramUserID,
@@ -57,15 +59,16 @@ func (s *Store) CardFrontExistsInDeckForOwner(ctx context.Context, deckID int64,
 }
 
 func (s *Store) CreateCard(ctx context.Context, params CardCreateParams) (domain.Card, error) {
+	entryID, err := s.resolveOrCreateEntry(ctx, params.DeckID, params.Front, params.Back, params.Pronunciation, params.Example, params.Conjugation)
+	if err != nil {
+		return domain.Card{}, err
+	}
+
 	result, err := s.db.ExecContext(
 		ctx,
-		`INSERT INTO cards (deck_id, front, back, pronunciation, example, conjugation, status) VALUES (?, ?, ?, ?, ?, ?, 'active')`,
+		`INSERT INTO cards (deck_id, entry_id, status) VALUES (?, ?, 'active')`,
 		params.DeckID,
-		params.Front,
-		params.Back,
-		params.Pronunciation,
-		params.Example,
-		params.Conjugation,
+		entryID,
 	)
 	if err != nil {
 		return domain.Card{}, fmt.Errorf("insert card: %w", err)
@@ -87,13 +90,16 @@ func (s *Store) CreateCard(ctx context.Context, params CardCreateParams) (domain
 }
 
 func (s *Store) ListCards(ctx context.Context, deckID int64, status *domain.CardStatus) (cards []domain.Card, err error) {
-	query := `SELECT id, deck_id, front, back, pronunciation, example, conjugation, status, next_due_at, interval_sec, ease, lapses, last_reviewed_at FROM cards WHERE deck_id = ?`
+	query := `SELECT c.id, c.deck_id, c.entry_id, e.front, e.back, e.pronunciation, e.example, e.conjugation, c.status, c.next_due_at, c.interval_sec, c.ease, c.lapses, c.last_reviewed_at
+		FROM cards c
+		INNER JOIN entries e ON e.id = c.entry_id
+		WHERE c.deck_id = ?`
 	args := []any{deckID}
 	if status != nil {
-		query += ` AND status = ?`
+		query += ` AND c.status = ?`
 		args = append(args, string(*status))
 	}
-	query += ` ORDER BY id ASC`
+	query += ` ORDER BY c.id ASC`
 
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -121,9 +127,10 @@ func (s *Store) ListCards(ctx context.Context, deckID int64, status *domain.Card
 }
 
 func (s *Store) ListCardsForOwner(ctx context.Context, deckID int64, telegramUserID int64, status *domain.CardStatus) (cards []domain.Card, err error) {
-	query := `SELECT c.id, c.deck_id, c.front, c.back, c.pronunciation, c.example, c.conjugation, c.status, c.next_due_at, c.interval_sec, c.ease, c.lapses, c.last_reviewed_at
+	query := `SELECT c.id, c.deck_id, c.entry_id, e.front, e.back, e.pronunciation, e.example, e.conjugation, c.status, c.next_due_at, c.interval_sec, c.ease, c.lapses, c.last_reviewed_at
 		FROM cards c
 		INNER JOIN decks d ON d.id = c.deck_id
+		INNER JOIN entries e ON e.id = c.entry_id
 		WHERE c.deck_id = ? AND d.telegram_user_id = ?`
 	args := []any{deckID, telegramUserID}
 	if status != nil {
@@ -159,9 +166,10 @@ func (s *Store) ListCardsForOwner(ctx context.Context, deckID int64, telegramUse
 func (s *Store) GetCardByID(ctx context.Context, cardID int64) (*domain.Card, error) {
 	row := s.db.QueryRowContext(
 		ctx,
-		`SELECT id, deck_id, front, back, pronunciation, example, conjugation, status, next_due_at, interval_sec, ease, lapses, last_reviewed_at
-		 FROM cards
-		 WHERE id = ?`,
+		`SELECT c.id, c.deck_id, c.entry_id, e.front, e.back, e.pronunciation, e.example, e.conjugation, c.status, c.next_due_at, c.interval_sec, c.ease, c.lapses, c.last_reviewed_at
+		 FROM cards c
+		 INNER JOIN entries e ON e.id = c.entry_id
+		 WHERE c.id = ?`,
 		cardID,
 	)
 	card, err := scanCard(row)
@@ -177,9 +185,10 @@ func (s *Store) GetCardByID(ctx context.Context, cardID int64) (*domain.Card, er
 func (s *Store) GetCardByIDForOwner(ctx context.Context, cardID int64, telegramUserID int64) (*domain.Card, error) {
 	row := s.db.QueryRowContext(
 		ctx,
-		`SELECT c.id, c.deck_id, c.front, c.back, c.pronunciation, c.example, c.conjugation, c.status, c.next_due_at, c.interval_sec, c.ease, c.lapses, c.last_reviewed_at
+		`SELECT c.id, c.deck_id, c.entry_id, e.front, e.back, e.pronunciation, e.example, e.conjugation, c.status, c.next_due_at, c.interval_sec, c.ease, c.lapses, c.last_reviewed_at
 		 FROM cards c
 		 INNER JOIN decks d ON d.id = c.deck_id
+		 INNER JOIN entries e ON e.id = c.entry_id
 		 WHERE c.id = ? AND d.telegram_user_id = ?`,
 		cardID,
 		telegramUserID,
@@ -264,12 +273,13 @@ func (s *Store) UpdateCardSchedule(ctx context.Context, cardID int64, nextDueAt 
 func (s *Store) NextCardForDeck(ctx context.Context, deckID int64, now time.Time) (*domain.Card, error) {
 	row := s.db.QueryRowContext(
 		ctx,
-		`SELECT id, deck_id, front, back, pronunciation, example, conjugation, status, next_due_at, interval_sec, ease, lapses, last_reviewed_at
-		 FROM cards
-		 WHERE deck_id = ?
-		   AND status = 'active'
-		   AND next_due_at <= ?
-		 ORDER BY next_due_at ASC, id ASC
+		`SELECT c.id, c.deck_id, c.entry_id, e.front, e.back, e.pronunciation, e.example, e.conjugation, c.status, c.next_due_at, c.interval_sec, c.ease, c.lapses, c.last_reviewed_at
+		 FROM cards c
+		 INNER JOIN entries e ON e.id = c.entry_id
+		 WHERE c.deck_id = ?
+		   AND c.status = 'active'
+		   AND c.next_due_at <= ?
+		 ORDER BY c.next_due_at ASC, c.id ASC
 		 LIMIT 1`,
 		deckID,
 		now.UTC(),
@@ -289,9 +299,10 @@ func (s *Store) NextCardForDeck(ctx context.Context, deckID int64, now time.Time
 func (s *Store) NextCardForDeckForOwner(ctx context.Context, deckID int64, telegramUserID int64, now time.Time) (*domain.Card, error) {
 	row := s.db.QueryRowContext(
 		ctx,
-		`SELECT c.id, c.deck_id, c.front, c.back, c.pronunciation, c.example, c.conjugation, c.status, c.next_due_at, c.interval_sec, c.ease, c.lapses, c.last_reviewed_at
+		`SELECT c.id, c.deck_id, c.entry_id, e.front, e.back, e.pronunciation, e.example, e.conjugation, c.status, c.next_due_at, c.interval_sec, c.ease, c.lapses, c.last_reviewed_at
 		 FROM cards c
 		 INNER JOIN decks d ON d.id = c.deck_id
+		 INNER JOIN entries e ON e.id = c.entry_id
 		 WHERE c.deck_id = ?
 		   AND d.telegram_user_id = ?
 		   AND c.status = 'active'
@@ -361,6 +372,7 @@ func scanCard(scanner interface{ Scan(dest ...any) error }) (domain.Card, error)
 	if err := scanner.Scan(
 		&card.ID,
 		&card.DeckID,
+		&card.EntryID,
 		&card.Front,
 		&card.Back,
 		&card.Pronunciation,
@@ -381,4 +393,54 @@ func scanCard(scanner interface{ Scan(dest ...any) error }) (domain.Card, error)
 	}
 	card.NextDueAt = nextDueAt
 	return card, nil
+}
+
+func (s *Store) resolveOrCreateEntry(ctx context.Context, deckID int64, front, back, pronunciation, example, conjugation string) (int64, error) {
+	frontNorm := strings.ToLower(strings.TrimSpace(front))
+	if frontNorm == "" {
+		return 0, fmt.Errorf("front must not be empty")
+	}
+	if _, err := s.db.ExecContext(
+		ctx,
+		`INSERT INTO entries (
+			language_from, language_to, front_norm, front, back, pronunciation, example, conjugation, updated_at
+		)
+		SELECT
+			d.language_from, d.language_to, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP
+		FROM decks d
+		WHERE d.id = ?
+		ON CONFLICT(language_from, language_to, front_norm) DO UPDATE SET
+			front = excluded.front,
+			back = excluded.back,
+			pronunciation = excluded.pronunciation,
+			example = excluded.example,
+			conjugation = excluded.conjugation,
+			updated_at = CURRENT_TIMESTAMP`,
+		frontNorm,
+		front,
+		back,
+		pronunciation,
+		example,
+		conjugation,
+		deckID,
+	); err != nil {
+		return 0, fmt.Errorf("upsert entry: %w", err)
+	}
+
+	var entryID int64
+	if err := s.db.QueryRowContext(
+		ctx,
+		`SELECT e.id
+		 FROM decks d
+		 INNER JOIN entries e ON e.language_from = d.language_from
+		 	AND e.language_to = d.language_to
+		 	AND e.front_norm = ?
+		 WHERE d.id = ?
+		 LIMIT 1`,
+		frontNorm,
+		deckID,
+	).Scan(&entryID); err != nil {
+		return 0, fmt.Errorf("resolve entry id: %w", err)
+	}
+	return entryID, nil
 }

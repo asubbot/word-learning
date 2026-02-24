@@ -29,7 +29,7 @@ lint:
 	golangci-lint run ./...
 
 cyclo:
-	go run github.com/fzipp/gocyclo/cmd/gocyclo@latest -over 15 -ignore '.*_test\.go' .
+	go run github.com/fzipp/gocyclo/cmd/gocyclo@latest -over 15 .
 
 coverage:
 	go test ./... -coverprofile=coverage.out -covermode=atomic

@@ -22,6 +22,7 @@ type Deck struct {
 type Card struct {
 	ID             int64
 	DeckID         int64
+	EntryID        int64
 	Front          string
 	Back           string
 	Pronunciation  string

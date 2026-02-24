@@ -442,3 +442,150 @@ func TestFindDeckByNameForOwner(t *testing.T) {
 		}
 	}
 }
+
+func TestBackfillEntriesPreferLatestFromLegacyCards(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "legacy-backfill.db")
+	store, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	ctx := context.Background()
+
+	_, err = store.DB().ExecContext(ctx, `
+		CREATE TABLE decks (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			telegram_user_id INTEGER NOT NULL DEFAULT 0,
+			name TEXT NOT NULL,
+			language_from TEXT NOT NULL,
+			language_to TEXT NOT NULL,
+			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE TABLE cards (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			deck_id INTEGER NOT NULL,
+			front TEXT NOT NULL,
+			back TEXT NOT NULL,
+			pronunciation TEXT NOT NULL DEFAULT '',
+			example TEXT NOT NULL DEFAULT '',
+			conjugation TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL DEFAULT 'active',
+			next_due_at DATETIME NULL,
+			interval_sec INTEGER NOT NULL DEFAULT 0,
+			ease REAL NOT NULL DEFAULT 2.5,
+			lapses INTEGER NOT NULL DEFAULT 0,
+			last_reviewed_at DATETIME NULL,
+			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+		);
+	`)
+	if err != nil {
+		t.Fatalf("create legacy schema: %v", err)
+	}
+
+	deck, err := store.CreateDeckForOwner(ctx, 101, "Legacy", "EN", "RU")
+	if err != nil {
+		t.Fatalf("CreateDeckForOwner: %v", err)
+	}
+	if _, err := store.DB().ExecContext(ctx,
+		`INSERT INTO cards (deck_id, front, back, pronunciation, example, conjugation, status) VALUES (?, ?, ?, ?, ?, ?, 'active')`,
+		deck.ID, "banished", "old-back", "/b/", "old ex", "",
+	); err != nil {
+		t.Fatalf("insert old card: %v", err)
+	}
+	if _, err := store.DB().ExecContext(ctx,
+		`INSERT INTO cards (deck_id, front, back, pronunciation, example, conjugation, status) VALUES (?, ?, ?, ?, ?, ?, 'active')`,
+		deck.ID, "banished", "new-back", "/b2/", "new ex", "form",
+	); err != nil {
+		t.Fatalf("insert new card: %v", err)
+	}
+
+	if err := store.InitSchema(ctx); err != nil {
+		t.Fatalf("InitSchema legacy backfill: %v", err)
+	}
+
+	var entriesCount int64
+	if err := store.DB().QueryRowContext(ctx, `SELECT COUNT(1) FROM entries WHERE language_from='EN' AND language_to='RU' AND front_norm='banished'`).Scan(&entriesCount); err != nil {
+		t.Fatalf("count entries: %v", err)
+	}
+	if entriesCount != 1 {
+		t.Fatalf("expected exactly one entry, got %d", entriesCount)
+	}
+
+	var back, pron, ex, conj string
+	if err := store.DB().QueryRowContext(ctx, `SELECT back, pronunciation, example, conjugation FROM entries WHERE language_from='EN' AND language_to='RU' AND front_norm='banished'`).Scan(&back, &pron, &ex, &conj); err != nil {
+		t.Fatalf("select entry values: %v", err)
+	}
+	if back != "new-back" || pron != "/b2/" || ex != "new ex" || conj != "form" {
+		t.Fatalf("expected prefer-latest entry values, got back=%q pron=%q ex=%q conj=%q", back, pron, ex, conj)
+	}
+
+	var missing int64
+	if err := store.DB().QueryRowContext(ctx, `SELECT COUNT(1) FROM cards WHERE entry_id IS NULL`).Scan(&missing); err != nil {
+		t.Fatalf("count missing entry_id: %v", err)
+	}
+	if missing != 0 {
+		t.Fatalf("expected 0 cards with NULL entry_id, got %d", missing)
+	}
+}
+
+func TestCreateCard_UsesSharedEntryAcrossUsers(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	d1, err := store.CreateDeckForOwner(ctx, 101, "User1", "EN", "RU")
+	if err != nil {
+		t.Fatalf("CreateDeckForOwner d1: %v", err)
+	}
+	d2, err := store.CreateDeckForOwner(ctx, 202, "User2", "EN", "RU")
+	if err != nil {
+		t.Fatalf("CreateDeckForOwner d2: %v", err)
+	}
+
+	c1, err := store.CreateCard(ctx, CardCreateParams{
+		DeckID:        d1.ID,
+		Front:         "banished",
+		Back:          "old-back",
+		Pronunciation: "/b/",
+		Example:       "old ex",
+		Conjugation:   "",
+	})
+	if err != nil {
+		t.Fatalf("CreateCard c1: %v", err)
+	}
+	c2, err := store.CreateCard(ctx, CardCreateParams{
+		DeckID:        d2.ID,
+		Front:         "banished",
+		Back:          "new-back",
+		Pronunciation: "/b2/",
+		Example:       "new ex",
+		Conjugation:   "forms",
+	})
+	if err != nil {
+		t.Fatalf("CreateCard c2: %v", err)
+	}
+
+	if c1.EntryID == 0 || c2.EntryID == 0 {
+		t.Fatalf("expected non-zero entry ids, got c1=%d c2=%d", c1.EntryID, c2.EntryID)
+	}
+	if c1.EntryID != c2.EntryID {
+		t.Fatalf("expected shared entry id, got c1=%d c2=%d", c1.EntryID, c2.EntryID)
+	}
+
+	refetched, err := store.GetCardByID(ctx, c1.ID)
+	if err != nil {
+		t.Fatalf("GetCardByID c1: %v", err)
+	}
+	if refetched == nil {
+		t.Fatal("expected refetched card")
+	}
+	// Shared live dictionary: latest upserted entry text is visible to both users.
+	if refetched.Back != "new-back" || refetched.Example != "new ex" {
+		t.Fatalf("expected shared live entry values, got back=%q example=%q", refetched.Back, refetched.Example)
+	}
+}
