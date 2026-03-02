@@ -444,3 +444,179 @@ func (s *Store) resolveOrCreateEntry(ctx context.Context, deckID int64, front, b
 	}
 	return entryID, nil
 }
+
+func (s *Store) RegenerateRemovedCardForOwner(ctx context.Context, deckID int64, telegramUserID int64, front, back, pronunciation, example, conjugation string, now time.Time) (bool, error) {
+	frontNorm := strings.ToLower(strings.TrimSpace(front))
+	if frontNorm == "" {
+		return false, fmt.Errorf("front must not be empty")
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("begin regenerate removed card transaction: %w", err)
+	}
+
+	activeExists, err := hasActiveCardForFrontTx(ctx, tx, deckID, telegramUserID, frontNorm)
+	if err != nil {
+		_ = tx.Rollback()
+		return false, fmt.Errorf("check active duplicate for regenerate: %w", err)
+	}
+	if activeExists {
+		return commitRegenerateTx(tx, false)
+	}
+
+	cardID, found, err := findRemovedCardForFrontTx(ctx, tx, deckID, telegramUserID, frontNorm)
+	if err != nil {
+		_ = tx.Rollback()
+		return false, fmt.Errorf("find removed card for regenerate: %w", err)
+	}
+	if !found {
+		return commitRegenerateTx(tx, false)
+	}
+
+	if err := upsertEntryForDeckTx(ctx, tx, deckID, frontNorm, front, back, pronunciation, example, conjugation); err != nil {
+		_ = tx.Rollback()
+		return false, fmt.Errorf("upsert entry for regenerate: %w", err)
+	}
+
+	entryID, err := resolveEntryIDForDeckTx(ctx, tx, deckID, frontNorm)
+	if err != nil {
+		_ = tx.Rollback()
+		return false, fmt.Errorf("resolve entry id for regenerate: %w", err)
+	}
+
+	reactivated, err := reactivateCardWithEntryTx(ctx, tx, cardID, entryID, now)
+	if err != nil {
+		_ = tx.Rollback()
+		return false, fmt.Errorf("reactivate removed card: %w", err)
+	}
+	if !reactivated {
+		return commitRegenerateTx(tx, false)
+	}
+
+	return commitRegenerateTx(tx, true)
+}
+
+func commitRegenerateTx(tx *sql.Tx, result bool) (bool, error) {
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("commit regenerate removed card transaction: %w", err)
+	}
+	return result, nil
+}
+
+func hasActiveCardForFrontTx(ctx context.Context, tx *sql.Tx, deckID int64, telegramUserID int64, frontNorm string) (bool, error) {
+	var exists int
+	if err := tx.QueryRowContext(
+		ctx,
+		`SELECT EXISTS(
+			SELECT 1
+			FROM cards c
+			INNER JOIN decks d ON d.id = c.deck_id
+			INNER JOIN entries e ON e.id = c.entry_id
+			WHERE c.deck_id = ?
+			  AND d.telegram_user_id = ?
+			  AND e.front_norm = ?
+			  AND c.status = 'active'
+		)`,
+		deckID,
+		telegramUserID,
+		frontNorm,
+	).Scan(&exists); err != nil {
+		return false, err
+	}
+	return exists == 1, nil
+}
+
+func findRemovedCardForFrontTx(ctx context.Context, tx *sql.Tx, deckID int64, telegramUserID int64, frontNorm string) (int64, bool, error) {
+	var cardID int64
+	row := tx.QueryRowContext(
+		ctx,
+		`SELECT c.id
+		 FROM cards c
+		 INNER JOIN decks d ON d.id = c.deck_id
+		 INNER JOIN entries e ON e.id = c.entry_id
+		 WHERE c.deck_id = ?
+		   AND d.telegram_user_id = ?
+		   AND e.front_norm = ?
+		   AND c.status = 'removed'
+		 ORDER BY c.id DESC
+		 LIMIT 1`,
+		deckID,
+		telegramUserID,
+		frontNorm,
+	)
+	if err := row.Scan(&cardID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, false, nil
+		}
+		return 0, false, err
+	}
+	return cardID, true, nil
+}
+
+func upsertEntryForDeckTx(ctx context.Context, tx *sql.Tx, deckID int64, frontNorm, front, back, pronunciation, example, conjugation string) error {
+	_, err := tx.ExecContext(
+		ctx,
+		`INSERT INTO entries (
+			language_from, language_to, front_norm, front, back, pronunciation, example, conjugation, updated_at
+		)
+		SELECT
+			d.language_from, d.language_to, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP
+		FROM decks d
+		WHERE d.id = ?
+		ON CONFLICT(language_from, language_to, front_norm) DO UPDATE SET
+			front = excluded.front,
+			back = excluded.back,
+			pronunciation = excluded.pronunciation,
+			example = excluded.example,
+			conjugation = excluded.conjugation,
+			updated_at = CURRENT_TIMESTAMP`,
+		frontNorm,
+		front,
+		back,
+		pronunciation,
+		example,
+		conjugation,
+		deckID,
+	)
+	return err
+}
+
+func resolveEntryIDForDeckTx(ctx context.Context, tx *sql.Tx, deckID int64, frontNorm string) (int64, error) {
+	var entryID int64
+	if err := tx.QueryRowContext(
+		ctx,
+		`SELECT e.id
+		 FROM decks d
+		 INNER JOIN entries e ON e.language_from = d.language_from
+		 	AND e.language_to = d.language_to
+		 	AND e.front_norm = ?
+		 WHERE d.id = ?
+		 LIMIT 1`,
+		frontNorm,
+		deckID,
+	).Scan(&entryID); err != nil {
+		return 0, err
+	}
+	return entryID, nil
+}
+
+func reactivateCardWithEntryTx(ctx context.Context, tx *sql.Tx, cardID int64, entryID int64, now time.Time) (bool, error) {
+	result, err := tx.ExecContext(
+		ctx,
+		`UPDATE cards
+		 SET entry_id = ?, status = 'active', next_due_at = ?, updated_at = CURRENT_TIMESTAMP
+		 WHERE id = ?`,
+		entryID,
+		now.UTC(),
+		cardID,
+	)
+	if err != nil {
+		return false, err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("count reactivated cards: %w", err)
+	}
+	return rows > 0, nil
+}

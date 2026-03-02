@@ -69,9 +69,10 @@ func (fakeAIGenerator) GenerateCard(ctx context.Context, req ai.GenerateCardRequ
 		return ai.GeneratedCard{}, fmt.Errorf("provider failed")
 	}
 	if strings.Contains(strings.ToLower(req.Front), "empty") {
-		return ai.GeneratedCard{Back: " "}, nil
+		return ai.GeneratedCard{Front: req.Front, Back: " "}, nil
 	}
 	return ai.GeneratedCard{
+		Front:         req.Front,
 		Back:          "translated-" + req.Front,
 		Pronunciation: "/p/",
 		Example:       "d",

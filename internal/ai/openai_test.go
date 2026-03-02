@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -73,7 +74,7 @@ func TestGenerateCard_Success(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{
-				{"message": map[string]any{"content": `{"back":"изгнанный","pronunciation":"/banished/","example":"desc","conjugation":""}`}},
+				{"message": map[string]any{"content": `{"front":"banished","back":"изгнанный","pronunciation":"/banished/","example":"desc","conjugation":""}`}},
 			},
 		})
 	}))
@@ -95,7 +96,7 @@ func TestGenerateCard_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateCard: %v", err)
 	}
-	if card.Back != "изгнанный" {
+	if card.Front != "banished" || card.Back != "изгнанный" {
 		t.Fatalf("unexpected card: %#v", card)
 	}
 }
@@ -134,6 +135,108 @@ func TestGenerateCard_MalformedJSON(t *testing.T) {
 	}
 }
 
+func TestGenerateCard_InvalidPayloadEmptyFront(t *testing.T) {
+	t.Parallel()
+	promptsDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(promptsDir, "prompt_en-ru.txt"), []byte("prompt"), 0o644); err != nil {
+		t.Fatalf("write prompt file: %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{
+				{"message": map[string]any{"content": `{"front":"   ","back":"ok","pronunciation":"","example":"","conjugation":""}`}},
+			},
+		})
+	}))
+	defer server.Close()
+
+	gen := NewOpenAIGenerator(Config{
+		APIKey:     "k",
+		BaseURL:    server.URL,
+		Model:      "m",
+		TimeoutSec: 2,
+		MaxRetries: 0,
+		PromptsDir: promptsDir,
+	})
+	if _, err := gen.GenerateCard(context.Background(), GenerateCardRequest{
+		LanguageFrom: "EN",
+		LanguageTo:   "RU",
+		Front:        "banished",
+	}); err == nil || !strings.Contains(err.Error(), "front is empty") {
+		t.Fatalf("expected empty front validation error, got %v", err)
+	}
+}
+
+func TestGenerateCard_InvalidPayloadEmptyBack(t *testing.T) {
+	t.Parallel()
+	promptsDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(promptsDir, "prompt_en-ru.txt"), []byte("prompt"), 0o644); err != nil {
+		t.Fatalf("write prompt file: %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{
+				{"message": map[string]any{"content": `{"front":"banished","back":"   ","pronunciation":"","example":"","conjugation":""}`}},
+			},
+		})
+	}))
+	defer server.Close()
+
+	gen := NewOpenAIGenerator(Config{
+		APIKey:     "k",
+		BaseURL:    server.URL,
+		Model:      "m",
+		TimeoutSec: 2,
+		MaxRetries: 0,
+		PromptsDir: promptsDir,
+	})
+	if _, err := gen.GenerateCard(context.Background(), GenerateCardRequest{
+		LanguageFrom: "EN",
+		LanguageTo:   "RU",
+		Front:        "banished",
+	}); err == nil || !strings.Contains(err.Error(), "back is empty") {
+		t.Fatalf("expected empty back validation error, got %v", err)
+	}
+}
+
+func TestGenerateCard_InvalidPayloadUnknownField(t *testing.T) {
+	t.Parallel()
+	promptsDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(promptsDir, "prompt_en-ru.txt"), []byte("prompt"), 0o644); err != nil {
+		t.Fatalf("write prompt file: %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{
+				{"message": map[string]any{"content": `{"front":"banished","back":"ok","pronunciation":"","example":"","conjugation":"","extra":"x"}`}},
+			},
+		})
+	}))
+	defer server.Close()
+
+	gen := NewOpenAIGenerator(Config{
+		APIKey:     "k",
+		BaseURL:    server.URL,
+		Model:      "m",
+		TimeoutSec: 2,
+		MaxRetries: 0,
+		PromptsDir: promptsDir,
+	})
+	if _, err := gen.GenerateCard(context.Background(), GenerateCardRequest{
+		LanguageFrom: "EN",
+		LanguageTo:   "RU",
+		Front:        "banished",
+	}); err == nil {
+		t.Fatal("expected unknown field validation error")
+	}
+}
+
 func TestGenerateCard_RetryableTimeout(t *testing.T) {
 	t.Parallel()
 	promptsDir := t.TempDir()
@@ -152,7 +255,7 @@ func TestGenerateCard_RetryableTimeout(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{
-				{"message": map[string]any{"content": `{"back":"ok","pronunciation":"","example":"","conjugation":""}`}},
+				{"message": map[string]any{"content": `{"front":"banished","back":"ok","pronunciation":"","example":"","conjugation":""}`}},
 			},
 		})
 	}))
@@ -188,7 +291,7 @@ func TestGenerateCard_MissingPromptFile(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{
-				{"message": map[string]any{"content": `{"back":"ok","pronunciation":"","example":"","conjugation":""}`}},
+				{"message": map[string]any{"content": `{"front":"banished","back":"ok","pronunciation":"","example":"","conjugation":""}`}},
 			},
 		})
 	}))
@@ -226,7 +329,7 @@ func TestGenerateCard_EmptyPromptFile(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{
-				{"message": map[string]any{"content": `{"back":"ok","pronunciation":"","example":"","conjugation":""}`}},
+				{"message": map[string]any{"content": `{"front":"banished","back":"ok","pronunciation":"","example":"","conjugation":""}`}},
 			},
 		})
 	}))
@@ -259,7 +362,7 @@ func TestGenerateCard_NormalizesLanguagePairInPromptFileName(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{
-				{"message": map[string]any{"content": `{"back":"ok","pronunciation":"","example":"","conjugation":""}`}},
+				{"message": map[string]any{"content": `{"front":"banished","back":"ok","pronunciation":"","example":"","conjugation":""}`}},
 			},
 		})
 	}))

@@ -9,6 +9,7 @@ type GenerateCardRequest struct {
 }
 
 type GeneratedCard struct {
+	Front         string
 	Back          string
 	Pronunciation string
 	Example       string

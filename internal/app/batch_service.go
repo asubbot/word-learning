@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"word-learning-cli/internal/ai"
 )
@@ -79,16 +80,24 @@ func (s *Service) AddCardsBatchAIForUser(ctx context.Context, telegramUserID int
 			continue
 		}
 
+		generatedFront := strings.TrimSpace(generated.Front)
 		back := strings.TrimSpace(generated.Back)
 		pronunciation := strings.TrimSpace(generated.Pronunciation)
 		example := strings.TrimSpace(generated.Example)
 		conjugation := strings.TrimSpace(generated.Conjugation)
+		if generatedFront == "" {
+			item.Status = BatchAddStatusFailedValidation
+			item.Reason = "generated front is empty"
+			report.AddItem(item)
+			continue
+		}
 		if back == "" {
 			item.Status = BatchAddStatusFailedValidation
 			item.Reason = "generated back is empty"
 			report.AddItem(item)
 			continue
 		}
+		item.FrontNormalized = generatedFront
 
 		if params.DryRun {
 			item.Status = BatchAddStatusCreated
@@ -96,13 +105,35 @@ func (s *Service) AddCardsBatchAIForUser(ctx context.Context, telegramUserID int
 			continue
 		}
 
-		_, addErr := s.AddCardForUser(ctx, telegramUserID, params.DeckID, front, back, pronunciation, example, conjugation)
+		_, addErr := s.AddCardForUser(ctx, telegramUserID, params.DeckID, generatedFront, back, pronunciation, example, conjugation)
 		if addErr == nil {
 			item.Status = BatchAddStatusCreated
 			report.AddItem(item)
 			continue
 		}
 		if errors.Is(addErr, ErrCardAlreadyExists) {
+			regenerated, regenErr := s.store.RegenerateRemovedCardForOwner(
+				ctx,
+				params.DeckID,
+				telegramUserID,
+				generatedFront,
+				back,
+				pronunciation,
+				example,
+				conjugation,
+				time.Now().UTC(),
+			)
+			if regenErr != nil {
+				item.Status = BatchAddStatusFailedValidation
+				item.Reason = regenErr.Error()
+				report.AddItem(item)
+				continue
+			}
+			if regenerated {
+				item.Status = BatchAddStatusCreated
+				report.AddItem(item)
+				continue
+			}
 			item.Status = BatchAddStatusDuplicate
 			item.Reason = addErr.Error()
 			report.AddItem(item)

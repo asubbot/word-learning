@@ -102,6 +102,7 @@ func TestAddCardsBatchAIForUser_AllSuccess(t *testing.T) {
 	generator := fakeGenerator{
 		generate: func(req ai.GenerateCardRequest) (ai.GeneratedCard, error) {
 			return ai.GeneratedCard{
+				Front:         req.Front,
 				Back:          "translated-" + req.Front,
 				Pronunciation: "/p/",
 				Example:       "d",
@@ -142,7 +143,7 @@ func TestAddCardsBatchAIForUser_DuplicateSkip(t *testing.T) {
 	}
 	generator := fakeGenerator{
 		generate: func(req ai.GenerateCardRequest) (ai.GeneratedCard, error) {
-			return ai.GeneratedCard{Back: "translated-" + req.Front}, nil
+			return ai.GeneratedCard{Front: req.Front, Back: "translated-" + req.Front}, nil
 		},
 	}
 
@@ -156,6 +157,59 @@ func TestAddCardsBatchAIForUser_DuplicateSkip(t *testing.T) {
 	}
 	if report.Summary.SkippedDuplicates != 1 || report.Summary.Created != 0 || report.Summary.Failed != 0 {
 		t.Fatalf("unexpected summary: %#v", report.Summary)
+	}
+}
+
+func TestAddCardsBatchAIForUser_RemovedDuplicateRegeneratedAndReactivated(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+	deckID := mustCreateDeck(t, svc)
+	seed, err := svc.AddCard(ctx, deckID, "duplicate", "old-back", "/old/", "old example", "")
+	if err != nil {
+		t.Fatalf("seed card: %v", err)
+	}
+	if err := svc.RemoveCard(ctx, seed.ID); err != nil {
+		t.Fatalf("remove seed card: %v", err)
+	}
+
+	generator := fakeGenerator{
+		generate: func(req ai.GenerateCardRequest) (ai.GeneratedCard, error) {
+			return ai.GeneratedCard{
+				Front:         req.Front,
+				Back:          "new-back",
+				Pronunciation: "/new/",
+				Example:       "new example",
+				Conjugation:   "",
+			}, nil
+		},
+	}
+
+	report, err := svc.AddCardsBatchAIForUser(ctx, 0, generator, BatchAddAIParams{
+		DeckID: deckID,
+		Lines:  []string{"duplicate"},
+		Mode:   BatchModeCLI,
+	})
+	if err != nil {
+		t.Fatalf("AddCardsBatchAIForUser: %v", err)
+	}
+	if report.Summary.Created != 1 || report.Summary.SkippedDuplicates != 0 || report.Summary.Failed != 0 {
+		t.Fatalf("unexpected summary: %#v", report.Summary)
+	}
+
+	allCards, err := svc.ListCards(ctx, deckID, "")
+	if err != nil {
+		t.Fatalf("ListCards all: %v", err)
+	}
+	if len(allCards) != 1 {
+		t.Fatalf("expected exactly one card after regeneration, got %d", len(allCards))
+	}
+	if allCards[0].Status != "active" {
+		t.Fatalf("expected card status active, got %q", allCards[0].Status)
+	}
+	if allCards[0].Back != "new-back" || allCards[0].Pronunciation != "/new/" || allCards[0].Example != "new example" {
+		t.Fatalf("expected regenerated fields to be applied, got %#v", allCards[0])
 	}
 }
 
@@ -192,7 +246,7 @@ func TestAddCardsBatchAIForUser_ValidationFailure(t *testing.T) {
 	deckID := mustCreateDeck(t, svc)
 	generator := fakeGenerator{
 		generate: func(req ai.GenerateCardRequest) (ai.GeneratedCard, error) {
-			return ai.GeneratedCard{Back: "   "}, nil
+			return ai.GeneratedCard{Front: req.Front, Back: "   "}, nil
 		},
 	}
 
@@ -217,7 +271,7 @@ func TestAddCardsBatchAIForUser_DryRunNoPersistence(t *testing.T) {
 	deckID := mustCreateDeck(t, svc)
 	generator := fakeGenerator{
 		generate: func(req ai.GenerateCardRequest) (ai.GeneratedCard, error) {
-			return ai.GeneratedCard{Back: "translated-" + req.Front}, nil
+			return ai.GeneratedCard{Front: req.Front, Back: "translated-" + req.Front}, nil
 		},
 	}
 
@@ -255,6 +309,7 @@ func TestAddCardsBatchAIToDeck_BotDeck(t *testing.T) {
 	generator := fakeGenerator{
 		generate: func(req ai.GenerateCardRequest) (ai.GeneratedCard, error) {
 			return ai.GeneratedCard{
+				Front:         req.Front,
 				Back:          "translated-" + req.Front,
 				Pronunciation: "/p/",
 				Example:       "d",
@@ -318,6 +373,7 @@ func TestAddCardsBatchAIForActiveDeckForUser(t *testing.T) {
 	generator := fakeGenerator{
 		generate: func(req ai.GenerateCardRequest) (ai.GeneratedCard, error) {
 			return ai.GeneratedCard{
+				Front:         req.Front,
 				Back:          "translated-" + req.Front,
 				Pronunciation: "/p/",
 				Example:       "ex",
@@ -344,5 +400,51 @@ func TestAddCardsBatchAIForActiveDeckForUser(t *testing.T) {
 	}
 	if report.Summary.Created != 2 || report.Summary.Failed != 0 {
 		t.Fatalf("unexpected summary: %#v", report.Summary)
+	}
+}
+
+func TestAddCardsBatchAIForUser_UsesGeneratedFrontForPersistence(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+	deckID := mustCreateDeck(t, svc)
+	input := "The president swore to CRACK DOWN ON corruption."
+	generator := fakeGenerator{
+		generate: func(req ai.GenerateCardRequest) (ai.GeneratedCard, error) {
+			return ai.GeneratedCard{
+				Front:         "crack down on",
+				Back:          "жестко пресекать",
+				Pronunciation: "/kræk daʊn ɒn/",
+				Example:       req.Front,
+				Conjugation:   "",
+			}, nil
+		},
+	}
+
+	report, err := svc.AddCardsBatchAIForUser(ctx, 0, generator, BatchAddAIParams{
+		DeckID: deckID,
+		Lines:  []string{input},
+		Mode:   BatchModeCLI,
+	})
+	if err != nil {
+		t.Fatalf("AddCardsBatchAIForUser: %v", err)
+	}
+	if report.Summary.Created != 1 || report.Items[0].FrontNormalized != "crack down on" {
+		t.Fatalf("unexpected report: %#v", report)
+	}
+
+	cards, err := svc.ListCards(ctx, deckID, "active")
+	if err != nil {
+		t.Fatalf("ListCards: %v", err)
+	}
+	if len(cards) != 1 {
+		t.Fatalf("expected 1 card, got %d", len(cards))
+	}
+	if cards[0].Front != "crack down on" {
+		t.Fatalf("expected generated front to be persisted, got %q", cards[0].Front)
+	}
+	if cards[0].Example != input {
+		t.Fatalf("expected input context in example, got %q", cards[0].Example)
 	}
 }

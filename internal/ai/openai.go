@@ -113,6 +113,7 @@ type chatCompletionsResponse struct {
 }
 
 type generatedPayload struct {
+	Front         string `json:"front"`
 	Back          string `json:"back"`
 	Pronunciation string `json:"pronunciation"`
 	Example       string `json:"example"`
@@ -221,9 +222,37 @@ func (g *OpenAIGenerator) generateOnce(ctx context.Context, req GenerateCardRequ
 	content = strings.TrimSuffix(content, "```")
 	content = strings.TrimSpace(content)
 
-	var generated generatedPayload
-	if err := json.Unmarshal([]byte(content), &generated); err != nil {
+	generated, err := decodeGeneratedPayload(content)
+	if err != nil {
 		return GeneratedCard{}, &ProviderError{Op: "decode generated card", Retryable: false, Err: err}
 	}
-	return GeneratedCard(generated), nil
+	return generated, nil
+}
+
+func decodeGeneratedPayload(content string) (GeneratedCard, error) {
+	var payload generatedPayload
+	decoder := json.NewDecoder(strings.NewReader(content))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&payload); err != nil {
+		return GeneratedCard{}, err
+	}
+	var extra json.RawMessage
+	if err := decoder.Decode(&extra); err != io.EOF {
+		return GeneratedCard{}, fmt.Errorf("unexpected trailing JSON tokens")
+	}
+
+	card := GeneratedCard{
+		Front:         strings.TrimSpace(payload.Front),
+		Back:          strings.TrimSpace(payload.Back),
+		Pronunciation: strings.TrimSpace(payload.Pronunciation),
+		Example:       strings.TrimSpace(payload.Example),
+		Conjugation:   strings.TrimSpace(payload.Conjugation),
+	}
+	if card.Front == "" {
+		return GeneratedCard{}, fmt.Errorf("invalid payload: front is empty")
+	}
+	if card.Back == "" {
+		return GeneratedCard{}, fmt.Errorf("invalid payload: back is empty")
+	}
+	return card, nil
 }
