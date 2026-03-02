@@ -110,6 +110,23 @@ func (s *Service) ResolveActiveDeckForUser(ctx context.Context, userID int64) (*
 	return deck, nil
 }
 
+func (s *Service) DeckUseByIDForUser(ctx context.Context, userID, deckID int64) (*domain.Deck, error) {
+	if deckID <= 0 {
+		return nil, fmt.Errorf("deck id must be a positive integer")
+	}
+	deck, err := s.store.GetDeckForOwner(ctx, deckID, userID)
+	if err != nil {
+		return nil, err
+	}
+	if deck == nil {
+		return nil, fmt.Errorf("deck %d not found", deckID)
+	}
+	if err := s.store.SetActiveDeckForUser(ctx, userID, deck.ID); err != nil {
+		return nil, err
+	}
+	return deck, nil
+}
+
 func normalizeLanguageCode(value string) (string, error) {
 	trimmed := strings.TrimSpace(value)
 	if !languageCodePattern.MatchString(trimmed) {

@@ -639,3 +639,132 @@ func TestCreateCard_UsesSharedEntryAcrossUsers(t *testing.T) {
 		t.Fatalf("expected shared live entry values, got back=%q example=%q", refetched.Back, refetched.Example)
 	}
 }
+
+func TestRegenerateRemovedCardForOwner_ReactivatesAndUpdatesEntry(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	deck, err := store.CreateDeckForOwner(ctx, 101, "Owner Deck", "EN", "RU")
+	if err != nil {
+		t.Fatalf("CreateDeckForOwner: %v", err)
+	}
+	card, err := store.CreateCard(ctx, CardCreateParams{
+		DeckID:        deck.ID,
+		Front:         "banished",
+		Back:          "old-back",
+		Pronunciation: "/old/",
+		Example:       "old ex",
+		Conjugation:   "",
+	})
+	if err != nil {
+		t.Fatalf("CreateCard: %v", err)
+	}
+	if updated, err := store.SetCardStatus(ctx, card.ID, domain.CardStatusRemoved); err != nil || !updated {
+		t.Fatalf("SetCardStatus removed: updated=%v err=%v", updated, err)
+	}
+
+	regenerated, err := store.RegenerateRemovedCardForOwner(
+		ctx,
+		deck.ID,
+		101,
+		"BANISHED",
+		"new-back",
+		"/new/",
+		"new example",
+		"forms",
+		now,
+	)
+	if err != nil {
+		t.Fatalf("RegenerateRemovedCardForOwner: %v", err)
+	}
+	if !regenerated {
+		t.Fatal("expected removed card to be regenerated")
+	}
+
+	got, err := store.GetCardByIDForOwner(ctx, card.ID, 101)
+	if err != nil {
+		t.Fatalf("GetCardByIDForOwner: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected card to exist after regeneration")
+	}
+	if got.Status != domain.CardStatusActive {
+		t.Fatalf("expected active status, got %q", got.Status)
+	}
+	if got.Back != "new-back" || got.Pronunciation != "/new/" || got.Example != "new example" || got.Conjugation != "forms" {
+		t.Fatalf("expected updated generated fields, got %#v", got)
+	}
+	if got.NextDueAt.Before(now.Add(-1*time.Second)) || got.NextDueAt.After(now.Add(1*time.Second)) {
+		t.Fatalf("expected due time around %s, got %s", now.Format(time.RFC3339), got.NextDueAt.Format(time.RFC3339))
+	}
+}
+
+func TestRegenerateRemovedCardForOwner_ActiveDuplicateReturnsFalse(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	deck, err := store.CreateDeckForOwner(ctx, 101, "Owner Deck", "EN", "RU")
+	if err != nil {
+		t.Fatalf("CreateDeckForOwner: %v", err)
+	}
+	removed, err := store.CreateCard(ctx, CardCreateParams{DeckID: deck.ID, Front: "banished", Back: "old"})
+	if err != nil {
+		t.Fatalf("CreateCard removed: %v", err)
+	}
+	if updated, err := store.SetCardStatus(ctx, removed.ID, domain.CardStatusRemoved); err != nil || !updated {
+		t.Fatalf("SetCardStatus removed: updated=%v err=%v", updated, err)
+	}
+	if _, err := store.CreateCard(ctx, CardCreateParams{DeckID: deck.ID, Front: "banished", Back: "active"}); err != nil {
+		t.Fatalf("CreateCard active duplicate: %v", err)
+	}
+
+	regenerated, err := store.RegenerateRemovedCardForOwner(
+		ctx,
+		deck.ID,
+		101,
+		"banished",
+		"new-back",
+		"/new/",
+		"new example",
+		"",
+		time.Now().UTC(),
+	)
+	if err != nil {
+		t.Fatalf("RegenerateRemovedCardForOwner: %v", err)
+	}
+	if regenerated {
+		t.Fatal("expected regenerate=false when active duplicate exists")
+	}
+
+	removedAfter, err := store.GetCardByIDForOwner(ctx, removed.ID, 101)
+	if err != nil {
+		t.Fatalf("GetCardByIDForOwner removed: %v", err)
+	}
+	if removedAfter == nil || removedAfter.Status != domain.CardStatusRemoved {
+		t.Fatalf("expected removed card unchanged, got %#v", removedAfter)
+	}
+}
+
+func TestRegenerateRemovedCardForOwner_InvalidFront(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	deck, err := store.CreateDeckForOwner(ctx, 101, "Owner Deck", "EN", "RU")
+	if err != nil {
+		t.Fatalf("CreateDeckForOwner: %v", err)
+	}
+	regenerated, err := store.RegenerateRemovedCardForOwner(ctx, deck.ID, 101, "   ", "b", "", "", "", time.Now().UTC())
+	if err == nil {
+		t.Fatal("expected validation error for empty front")
+	}
+	if regenerated {
+		t.Fatal("expected regenerate=false for invalid input")
+	}
+}

@@ -1,6 +1,10 @@
 package app
 
-import "testing"
+import (
+	"context"
+	"strings"
+	"testing"
+)
 
 func TestNormalizeLanguageCode(t *testing.T) {
 	tests := []struct {
@@ -45,5 +49,24 @@ func TestParseCardStatus(t *testing.T) {
 
 	if _, err := parseCardStatus("unknown"); err == nil {
 		t.Fatal("expected error for invalid status")
+	}
+}
+
+func TestDeckUseByIDForUserValidationAndOwnership(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+
+	if _, err := svc.DeckUseByIDForUser(ctx, 101, 0); err == nil {
+		t.Fatal("expected error for non-positive deck id")
+	}
+
+	ownerDeck, err := svc.CreateDeckForUser(ctx, 202, "Owner Deck", "EN", "RU")
+	if err != nil {
+		t.Fatalf("CreateDeckForUser: %v", err)
+	}
+	if _, err := svc.DeckUseByIDForUser(ctx, 101, ownerDeck.ID); err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("expected not found for foreign deck, got %v", err)
 	}
 }

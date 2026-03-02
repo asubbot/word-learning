@@ -15,12 +15,18 @@ import (
 )
 
 type fakeAPI struct {
-	sentTexts     []string
-	sentConfigs   []tgbotapi.MessageConfig
-	callbackTexts []string
+	sentTexts      []string
+	sentConfigs    []tgbotapi.MessageConfig
+	callbackTexts  []string
+	failSendOnCall int
+	sendCallCount  int
 }
 
 func (f *fakeAPI) Send(c tgbotapi.Chattable) (tgbotapi.Message, error) {
+	f.sendCallCount++
+	if f.failSendOnCall > 0 && f.sendCallCount == f.failSendOnCall {
+		return tgbotapi.Message{}, fmt.Errorf("send failed")
+	}
 	if msg, ok := c.(tgbotapi.MessageConfig); ok {
 		f.sentConfigs = append(f.sentConfigs, msg)
 		f.sentTexts = append(f.sentTexts, msg.Text)
@@ -99,6 +105,14 @@ func commandMessage(chatID int64, userID int64, text string, command string) *tg
 			Offset: 0,
 			Length: len("/" + command),
 		}},
+	}
+}
+
+func plainMessage(chatID int64, userID int64, text string) *tgbotapi.Message {
+	return &tgbotapi.Message{
+		Chat: &tgbotapi.Chat{ID: chatID},
+		From: &tgbotapi.User{ID: userID},
+		Text: text,
 	}
 }
 
@@ -246,5 +260,421 @@ func TestBotCardAddBatchAIFlow(t *testing.T) {
 	}
 	if !strings.Contains(last, "failed=2") {
 		t.Fatalf("expected failure count in summary, got %q", last)
+	}
+}
+
+func TestBotSwitchDeckButtonShowsInlineUseButtons(t *testing.T) {
+	t.Parallel()
+
+	h, api := newTestHandler(t)
+	ctx := context.Background()
+	if _, err := h.service.CreateDeckForUser(ctx, 42, "Basics", "EN", "RU"); err != nil {
+		t.Fatalf("CreateDeckForUser basics: %v", err)
+	}
+	if _, err := h.service.CreateDeckForUser(ctx, 42, "Phrasal", "EN", "RU"); err != nil {
+		t.Fatalf("CreateDeckForUser phrasal: %v", err)
+	}
+
+	if err := h.handleUpdate(ctx, tgbotapi.Update{Message: plainMessage(100, 42, switchDeckButtonText)}); err != nil {
+		t.Fatalf("switch deck button: %v", err)
+	}
+	if len(api.sentConfigs) == 0 {
+		t.Fatal("expected menu message")
+	}
+	last := api.sentConfigs[len(api.sentConfigs)-1]
+	if last.Text != "Choose deck:" {
+		t.Fatalf("expected choose deck text, got %q", last.Text)
+	}
+	markup, ok := last.ReplyMarkup.(tgbotapi.InlineKeyboardMarkup)
+	if !ok {
+		t.Fatalf("expected inline keyboard, got %T", last.ReplyMarkup)
+	}
+	if len(markup.InlineKeyboard) != 2 {
+		t.Fatalf("expected 2 deck rows, got %d", len(markup.InlineKeyboard))
+	}
+	if markup.InlineKeyboard[0][0].CallbackData == nil || !strings.Contains(*markup.InlineKeyboard[0][0].CallbackData, "act=use_deck;deck=") {
+		t.Fatalf("expected use_deck payload, got %#v", markup.InlineKeyboard[0][0].CallbackData)
+	}
+}
+
+func TestBotUseDeckCallbackSwitchesActiveAndSendsNextCard(t *testing.T) {
+	t.Parallel()
+
+	h, api := newTestHandler(t)
+	ctx := context.Background()
+	deck1, err := h.service.CreateDeckForUser(ctx, 42, "Deck1", "EN", "RU")
+	if err != nil {
+		t.Fatalf("CreateDeckForUser deck1: %v", err)
+	}
+	deck2, err := h.service.CreateDeckForUser(ctx, 42, "Deck2", "EN", "RU")
+	if err != nil {
+		t.Fatalf("CreateDeckForUser deck2: %v", err)
+	}
+	if _, err := h.service.DeckUseForUser(ctx, 42, deck1.Name); err != nil {
+		t.Fatalf("DeckUseForUser deck1: %v", err)
+	}
+	if _, err := h.service.AddCardForUser(ctx, 42, deck2.ID, "banished", "изгнанный", "", "", ""); err != nil {
+		t.Fatalf("AddCardForUser: %v", err)
+	}
+
+	cb := &tgbotapi.CallbackQuery{
+		ID:      "cb-use-deck",
+		Data:    fmt.Sprintf("act=use_deck;deck=%d", deck2.ID),
+		From:    &tgbotapi.User{ID: 42},
+		Message: &tgbotapi.Message{Chat: &tgbotapi.Chat{ID: 100}},
+	}
+	if err := h.handleUpdate(ctx, tgbotapi.Update{CallbackQuery: cb}); err != nil {
+		t.Fatalf("handle use_deck callback: %v", err)
+	}
+
+	if len(api.callbackTexts) == 0 || api.callbackTexts[len(api.callbackTexts)-1] != "Done" {
+		t.Fatalf("expected Done callback answer, got %#v", api.callbackTexts)
+	}
+	activeDeckConfirmed := false
+	for _, sent := range api.sentTexts {
+		if strings.Contains(sent, "Active deck: Deck2") {
+			activeDeckConfirmed = true
+			break
+		}
+	}
+	if !activeDeckConfirmed {
+		t.Fatalf("expected active deck confirmation, got %#v", api.sentTexts)
+	}
+	cardMsg := api.sentConfigs[len(api.sentConfigs)-1]
+	if !strings.Contains(cardMsg.Text, "<b>banished</b>") {
+		t.Fatalf("expected next card from selected deck, got %q", cardMsg.Text)
+	}
+}
+
+func TestBotUseDeckCallbackRejectsForeignDeck(t *testing.T) {
+	t.Parallel()
+
+	h, api := newTestHandler(t)
+	ctx := context.Background()
+	otherDeck, err := h.service.CreateDeckForUser(ctx, 99, "Other", "EN", "RU")
+	if err != nil {
+		t.Fatalf("CreateDeckForUser other: %v", err)
+	}
+
+	cb := &tgbotapi.CallbackQuery{
+		ID:      "cb-use-foreign",
+		Data:    fmt.Sprintf("act=use_deck;deck=%d", otherDeck.ID),
+		From:    &tgbotapi.User{ID: 42},
+		Message: &tgbotapi.Message{Chat: &tgbotapi.Chat{ID: 100}},
+	}
+	if err := h.handleUpdate(ctx, tgbotapi.Update{CallbackQuery: cb}); err != nil {
+		t.Fatalf("handle foreign use_deck callback: %v", err)
+	}
+	if len(api.callbackTexts) == 0 || api.callbackTexts[len(api.callbackTexts)-1] != "Deck not found" {
+		t.Fatalf("expected Deck not found callback, got %#v", api.callbackTexts)
+	}
+}
+
+func TestBotUseDeckCallbackInvalidPayload(t *testing.T) {
+	t.Parallel()
+
+	h, api := newTestHandler(t)
+	ctx := context.Background()
+	cb := &tgbotapi.CallbackQuery{
+		ID:      "cb-use-invalid",
+		Data:    "act=use_deck;deck=bad",
+		From:    &tgbotapi.User{ID: 42},
+		Message: &tgbotapi.Message{Chat: &tgbotapi.Chat{ID: 100}},
+	}
+	if err := h.handleUpdate(ctx, tgbotapi.Update{CallbackQuery: cb}); err != nil {
+		t.Fatalf("handle invalid use_deck callback: %v", err)
+	}
+	if len(api.callbackTexts) == 0 || api.callbackTexts[len(api.callbackTexts)-1] != "Invalid action payload" {
+		t.Fatalf("expected invalid action callback, got %#v", api.callbackTexts)
+	}
+}
+
+func TestBotUseDeckCallbackMissingDeckField(t *testing.T) {
+	t.Parallel()
+
+	h, api := newTestHandler(t)
+	ctx := context.Background()
+	cb := &tgbotapi.CallbackQuery{
+		ID:      "cb-use-missing",
+		Data:    "act=use_deck",
+		From:    &tgbotapi.User{ID: 42},
+		Message: &tgbotapi.Message{Chat: &tgbotapi.Chat{ID: 100}},
+	}
+	if err := h.handleUpdate(ctx, tgbotapi.Update{CallbackQuery: cb}); err != nil {
+		t.Fatalf("handle missing deck payload: %v", err)
+	}
+	if len(api.callbackTexts) == 0 || api.callbackTexts[len(api.callbackTexts)-1] != "Invalid action payload" {
+		t.Fatalf("expected invalid action callback, got %#v", api.callbackTexts)
+	}
+}
+
+func TestBotUseDeckCallbackNoCardsSendsNoAvailable(t *testing.T) {
+	t.Parallel()
+
+	h, api := newTestHandler(t)
+	ctx := context.Background()
+	deck, err := h.service.CreateDeckForUser(ctx, 42, "Empty Deck", "EN", "RU")
+	if err != nil {
+		t.Fatalf("CreateDeckForUser: %v", err)
+	}
+
+	cb := &tgbotapi.CallbackQuery{
+		ID:      "cb-use-empty",
+		Data:    fmt.Sprintf("act=use_deck;deck=%d", deck.ID),
+		From:    &tgbotapi.User{ID: 42},
+		Message: &tgbotapi.Message{Chat: &tgbotapi.Chat{ID: 100}},
+	}
+	if err := h.handleUpdate(ctx, tgbotapi.Update{CallbackQuery: cb}); err != nil {
+		t.Fatalf("handle use empty deck callback: %v", err)
+	}
+	if len(api.sentTexts) == 0 || api.sentTexts[len(api.sentTexts)-1] != "No available cards right now." {
+		t.Fatalf("expected no cards message, got %#v", api.sentTexts)
+	}
+}
+
+func TestBotSwitchDeckButtonNoDecks(t *testing.T) {
+	t.Parallel()
+
+	h, api := newTestHandler(t)
+	ctx := context.Background()
+	if err := h.handleUpdate(ctx, tgbotapi.Update{Message: plainMessage(100, 42, switchDeckButtonText)}); err != nil {
+		t.Fatalf("switch deck button: %v", err)
+	}
+	if len(api.sentTexts) == 0 || api.sentTexts[len(api.sentTexts)-1] != "No decks found." {
+		t.Fatalf("expected no decks found text, got %#v", api.sentTexts)
+	}
+}
+
+func TestBotAddBatchAIButtonShowsModeMenu(t *testing.T) {
+	t.Parallel()
+
+	h, api := newTestHandler(t)
+	ctx := context.Background()
+	if _, err := h.service.CreateDeckForUser(ctx, 42, "Batch Deck", "EN", "RU"); err != nil {
+		t.Fatalf("CreateDeckForUser: %v", err)
+	}
+	if err := h.handleUpdate(ctx, tgbotapi.Update{Message: plainMessage(100, 42, addBatchAIButtonText)}); err != nil {
+		t.Fatalf("add batch ai button: %v", err)
+	}
+	if len(api.sentConfigs) == 0 {
+		t.Fatal("expected mode menu message")
+	}
+	last := api.sentConfigs[len(api.sentConfigs)-1]
+	if last.Text != "Choose deck for batch AI:" {
+		t.Fatalf("unexpected mode menu text: %q", last.Text)
+	}
+	markup, ok := last.ReplyMarkup.(tgbotapi.InlineKeyboardMarkup)
+	if !ok {
+		t.Fatalf("expected inline keyboard, got %T", last.ReplyMarkup)
+	}
+	if len(markup.InlineKeyboard) != 1 || len(markup.InlineKeyboard[0]) != 1 {
+		t.Fatalf("expected one inline button row, got %#v", markup.InlineKeyboard)
+	}
+	if markup.InlineKeyboard[0][0].CallbackData == nil || !strings.Contains(*markup.InlineKeyboard[0][0].CallbackData, "act=batch_ai_deck;deck=") {
+		t.Fatalf("unexpected callback payload: %#v", markup.InlineKeyboard[0][0].CallbackData)
+	}
+}
+
+func TestBotSendTextIncludesReplyKeyboard(t *testing.T) {
+	t.Parallel()
+
+	h, api := newTestHandler(t)
+	ctx := context.Background()
+	if err := h.handleUpdate(ctx, tgbotapi.Update{Message: commandMessage(100, 42, "/help", "help")}); err != nil {
+		t.Fatalf("help command: %v", err)
+	}
+	if len(api.sentConfigs) == 0 {
+		t.Fatal("expected sent message config")
+	}
+	last := api.sentConfigs[len(api.sentConfigs)-1]
+	if _, ok := last.ReplyMarkup.(tgbotapi.ReplyKeyboardMarkup); !ok {
+		t.Fatalf("expected reply keyboard in help response, got %T", last.ReplyMarkup)
+	}
+}
+
+func TestBotBatchAIDeckCallbackConsumesNextMessage(t *testing.T) {
+	t.Parallel()
+
+	h, api := newTestHandler(t)
+	ctx := context.Background()
+	deck, err := h.service.CreateDeckForUser(ctx, 42, "Batch Deck", "EN", "RU")
+	if err != nil {
+		t.Fatalf("CreateDeckForUser: %v", err)
+	}
+	if _, err := h.service.DeckUseByIDForUser(ctx, 42, deck.ID); err != nil {
+		t.Fatalf("DeckUseByIDForUser: %v", err)
+	}
+
+	cb := &tgbotapi.CallbackQuery{
+		ID:      "cb-batch-deck",
+		Data:    fmt.Sprintf("act=batch_ai_deck;deck=%d", deck.ID),
+		From:    &tgbotapi.User{ID: 42},
+		Message: &tgbotapi.Message{Chat: &tgbotapi.Chat{ID: 100}},
+	}
+	if err := h.handleUpdate(ctx, tgbotapi.Update{CallbackQuery: cb}); err != nil {
+		t.Fatalf("batch_ai_deck callback: %v", err)
+	}
+	if len(api.sentConfigs) == 0 || !strings.Contains(api.sentConfigs[len(api.sentConfigs)-1].Text, "Input mode for deck: Batch Deck (EN->RU)") {
+		t.Fatalf("expected input mode prompt, got %#v", api.sentTexts)
+	}
+	if _, ok := api.sentConfigs[len(api.sentConfigs)-1].ReplyMarkup.(tgbotapi.ForceReply); !ok {
+		t.Fatalf("expected ForceReply prompt, got %T", api.sentConfigs[len(api.sentConfigs)-1].ReplyMarkup)
+	}
+
+	if err := h.handleUpdate(ctx, tgbotapi.Update{Message: plainMessage(100, 42, "banished\ncome up with")}); err != nil {
+		t.Fatalf("batch input message: %v", err)
+	}
+	if len(api.sentTexts) == 0 || !strings.Contains(api.sentTexts[len(api.sentTexts)-1], "Batch summary: total=2") {
+		t.Fatalf("expected batch summary after next message, got %#v", api.sentTexts)
+	}
+
+	if err := h.handleUpdate(ctx, tgbotapi.Update{Message: plainMessage(100, 42, "banished")}); err != nil {
+		t.Fatalf("post-batch plain message: %v", err)
+	}
+	if !strings.Contains(api.sentTexts[len(api.sentTexts)-1], "Use /help to see available commands.") {
+		t.Fatalf("expected regular non-batch handling after one-shot consume, got %#v", api.sentTexts[len(api.sentTexts)-1])
+	}
+}
+
+func TestBotBatchAIDeckCallbackEmptyNextMessageShowsRetryHint(t *testing.T) {
+	t.Parallel()
+
+	h, api := newTestHandler(t)
+	ctx := context.Background()
+	deck, err := h.service.CreateDeckForUser(ctx, 42, "Batch Deck", "EN", "RU")
+	if err != nil {
+		t.Fatalf("CreateDeckForUser: %v", err)
+	}
+	cb := &tgbotapi.CallbackQuery{
+		ID:      "cb-batch-empty",
+		Data:    fmt.Sprintf("act=batch_ai_deck;deck=%d", deck.ID),
+		From:    &tgbotapi.User{ID: 42},
+		Message: &tgbotapi.Message{Chat: &tgbotapi.Chat{ID: 100}},
+	}
+	if err := h.handleUpdate(ctx, tgbotapi.Update{CallbackQuery: cb}); err != nil {
+		t.Fatalf("batch_ai_deck callback: %v", err)
+	}
+
+	if err := h.handleUpdate(ctx, tgbotapi.Update{Message: plainMessage(100, 42, "   ")}); err != nil {
+		t.Fatalf("empty batch input message: %v", err)
+	}
+	if len(api.sentTexts) == 0 || !strings.Contains(api.sentTexts[len(api.sentTexts)-1], "No valid fronts found. Tap Add batch AI and try again.") {
+		t.Fatalf("expected retry hint for empty input, got %#v", api.sentTexts)
+	}
+}
+
+func TestBotBatchAIDeckCallbackInvalidDeckPayload(t *testing.T) {
+	t.Parallel()
+
+	h, api := newTestHandler(t)
+	ctx := context.Background()
+	cb := &tgbotapi.CallbackQuery{
+		ID:      "cb-batch-invalid",
+		Data:    "act=batch_ai_deck;deck=bad",
+		From:    &tgbotapi.User{ID: 42},
+		Message: &tgbotapi.Message{Chat: &tgbotapi.Chat{ID: 100}},
+	}
+	if err := h.handleUpdate(ctx, tgbotapi.Update{CallbackQuery: cb}); err != nil {
+		t.Fatalf("batch_ai_deck callback: %v", err)
+	}
+	if len(api.callbackTexts) == 0 || api.callbackTexts[len(api.callbackTexts)-1] != "Invalid action payload" {
+		t.Fatalf("expected invalid payload callback, got %#v", api.callbackTexts)
+	}
+}
+
+func TestBotAddBatchAIButtonNoDecks(t *testing.T) {
+	t.Parallel()
+
+	h, api := newTestHandler(t)
+	ctx := context.Background()
+	if err := h.handleUpdate(ctx, tgbotapi.Update{Message: plainMessage(100, 42, addBatchAIButtonText)}); err != nil {
+		t.Fatalf("add batch ai button: %v", err)
+	}
+	if len(api.sentTexts) == 0 || api.sentTexts[len(api.sentTexts)-1] != "No decks found." {
+		t.Fatalf("expected no decks found text, got %#v", api.sentTexts)
+	}
+}
+
+func TestBotUseDeckCallbackReturnsErrorWhenConfirmationSendFails(t *testing.T) {
+	t.Parallel()
+
+	h, api := newTestHandler(t)
+	ctx := context.Background()
+	deck, err := h.service.CreateDeckForUser(ctx, 42, "Deck Fail Send", "EN", "RU")
+	if err != nil {
+		t.Fatalf("CreateDeckForUser: %v", err)
+	}
+	api.failSendOnCall = 1
+
+	cb := &tgbotapi.CallbackQuery{
+		ID:      "cb-use-send-fail",
+		Data:    fmt.Sprintf("act=use_deck;deck=%d", deck.ID),
+		From:    &tgbotapi.User{ID: 42},
+		Message: &tgbotapi.Message{Chat: &tgbotapi.Chat{ID: 100}},
+	}
+	if err := h.handleUpdate(ctx, tgbotapi.Update{CallbackQuery: cb}); err == nil {
+		t.Fatal("expected send error from use_deck flow")
+	}
+	if len(api.callbackTexts) == 0 || api.callbackTexts[len(api.callbackTexts)-1] != "Done" {
+		t.Fatalf("expected callback Done before send failure, got %#v", api.callbackTexts)
+	}
+	current, err := h.service.DeckCurrentForUser(ctx, 42)
+	if err != nil {
+		t.Fatalf("DeckCurrentForUser: %v", err)
+	}
+	if current == nil || current.ID != deck.ID {
+		t.Fatalf("expected deck switch to persist despite send failure, got %#v", current)
+	}
+}
+
+func TestBotDeckListCommandShowsInlineUseButtons(t *testing.T) {
+	t.Parallel()
+
+	h, api := newTestHandler(t)
+	ctx := context.Background()
+	if _, err := h.service.CreateDeckForUser(ctx, 42, "Basics", "EN", "RU"); err != nil {
+		t.Fatalf("CreateDeckForUser basics: %v", err)
+	}
+	if _, err := h.service.CreateDeckForUser(ctx, 42, "Phrasal", "EN", "RU"); err != nil {
+		t.Fatalf("CreateDeckForUser phrasal: %v", err)
+	}
+
+	if err := h.handleUpdate(ctx, tgbotapi.Update{Message: commandMessage(100, 42, "/deck_list", "deck_list")}); err != nil {
+		t.Fatalf("deck_list command: %v", err)
+	}
+	if len(api.sentConfigs) == 0 {
+		t.Fatal("expected deck list response")
+	}
+	last := api.sentConfigs[len(api.sentConfigs)-1]
+	if !strings.Contains(last.Text, "Your decks:") {
+		t.Fatalf("expected deck list text, got %q", last.Text)
+	}
+	markup, ok := last.ReplyMarkup.(tgbotapi.InlineKeyboardMarkup)
+	if !ok {
+		t.Fatalf("expected inline keyboard, got %T", last.ReplyMarkup)
+	}
+	if len(markup.InlineKeyboard) != 2 {
+		t.Fatalf("expected 2 deck rows, got %d", len(markup.InlineKeyboard))
+	}
+}
+
+func TestBotSwitchDeckButtonCaseInsensitiveAndTrimmed(t *testing.T) {
+	t.Parallel()
+
+	h, api := newTestHandler(t)
+	ctx := context.Background()
+	if _, err := h.service.CreateDeckForUser(ctx, 42, "Basics", "EN", "RU"); err != nil {
+		t.Fatalf("CreateDeckForUser basics: %v", err)
+	}
+
+	if err := h.handleUpdate(ctx, tgbotapi.Update{Message: plainMessage(100, 42, "   sWiTcH DeCk   ")}); err != nil {
+		t.Fatalf("switch deck mixed-case text: %v", err)
+	}
+	if len(api.sentConfigs) == 0 {
+		t.Fatal("expected switch deck menu message")
+	}
+	last := api.sentConfigs[len(api.sentConfigs)-1]
+	if last.Text != "Choose deck:" {
+		t.Fatalf("expected choose deck text, got %q", last.Text)
 	}
 }

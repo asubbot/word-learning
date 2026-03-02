@@ -31,6 +31,12 @@ type handler struct {
 	dedupe         *callbackDeduper
 	allow          map[int64]struct{}
 	newAIGenerator func() (ai.Generator, error)
+	batchAwaitMu   sync.Mutex
+	batchAwaitNext map[int64]batchAwaitState
+}
+
+type batchAwaitState struct {
+	deckID int64
 }
 
 type commandHandler func(context.Context, *tgbotapi.Message, int64) error
@@ -49,6 +55,11 @@ type callbackDeduper struct {
 	mu    sync.Mutex
 	items map[string]time.Time
 }
+
+const (
+	switchDeckButtonText = "Switch deck"
+	addBatchAIButtonText = "Add batch AI"
+)
 
 func newCallbackDeduper() *callbackDeduper {
 	return &callbackDeduper{items: make(map[string]time.Time)}
@@ -122,10 +133,13 @@ func (h *handler) handleUpdate(ctx context.Context, update tgbotapi.Update) erro
 			h.log.Warn("deny message from non-allowlisted user", "user_id", update.Message.From.ID)
 			return h.sendText(update.Message.Chat.ID, "Access denied.")
 		}
+		if state, ok := h.consumeAwaitBatchAI(update.Message.From.ID); ok {
+			return h.handleBatchAIInputMessage(ctx, update.Message, update.Message.From.ID, state)
+		}
 		if update.Message.IsCommand() {
 			return h.handleCommand(ctx, update.Message)
 		}
-		return h.sendText(update.Message.Chat.ID, "Use /help to see available commands.")
+		return h.handleTextMessage(ctx, update.Message)
 	}
 
 	if update.CallbackQuery != nil {
@@ -172,6 +186,14 @@ func (h *handler) handleCallback(ctx context.Context, cb *tgbotapi.CallbackQuery
 	if h.dedupe.Seen(cb.ID) {
 		return h.answerCallback(cb.ID, "Already processed.")
 	}
+	fields := parseKVPayload(cb.Data, ";", "=")
+	action := strings.TrimSpace(fields["act"])
+	if action == "use_deck" {
+		return h.handleUseDeckCallback(ctx, cb, fields)
+	}
+	if action == "batch_ai_deck" {
+		return h.handleBatchAIDeckCallback(ctx, cb, fields)
+	}
 
 	target, ok := h.resolveCallbackTarget(ctx, cb)
 	if !ok {
@@ -185,6 +207,67 @@ func (h *handler) handleCallback(ctx context.Context, cb *tgbotapi.CallbackQuery
 		h.log.Warn("answer callback", "error", err)
 	}
 	return h.sendNextCard(ctx, target.chatID, target.userID)
+}
+
+func (h *handler) handleUseDeckCallback(ctx context.Context, cb *tgbotapi.CallbackQuery, fields map[string]string) error {
+	deckRaw := strings.TrimSpace(fields["deck"])
+	deckID, err := parsePositiveInt(deckRaw, "invalid deck id")
+	if err != nil {
+		_ = h.answerCallback(cb.ID, "Invalid action payload")
+		return nil
+	}
+	deck, err := h.service.DeckUseByIDForUser(ctx, cb.From.ID, deckID)
+	if err != nil {
+		_ = h.answerCallback(cb.ID, "Deck not found")
+		return nil
+	}
+	if err := h.answerCallback(cb.ID, "Done"); err != nil {
+		h.log.Warn("answer callback", "error", err)
+	}
+	if err := h.sendText(cb.Message.Chat.ID, fmt.Sprintf("Active deck: %s (%s->%s)", deck.Name, deck.LanguageFrom, deck.LanguageTo)); err != nil {
+		return err
+	}
+	return h.sendNextCard(ctx, cb.Message.Chat.ID, cb.From.ID)
+}
+
+func (h *handler) handleTextMessage(ctx context.Context, msg *tgbotapi.Message) error {
+	text := strings.TrimSpace(msg.Text)
+	switch {
+	case strings.EqualFold(text, switchDeckButtonText):
+		return h.sendSwitchDeckMenu(ctx, msg.Chat.ID, msg.From.ID)
+	case strings.EqualFold(text, addBatchAIButtonText):
+		return h.sendBatchAIDeckMenu(ctx, msg.Chat.ID, msg.From.ID)
+	default:
+		return h.sendText(msg.Chat.ID, "Use /help to see available commands.")
+	}
+}
+
+func (h *handler) handleBatchAIDeckCallback(ctx context.Context, cb *tgbotapi.CallbackQuery, fields map[string]string) error {
+	if cb == nil || cb.From == nil || cb.Message == nil {
+		return nil
+	}
+	deckRaw := strings.TrimSpace(fields["deck"])
+	deckID, err := parsePositiveInt(deckRaw, "invalid deck id")
+	if err != nil {
+		_ = h.answerCallback(cb.ID, "Invalid action payload")
+		return nil
+	}
+	deck, found, err := h.findDeckForUserByID(ctx, cb.From.ID, deckID)
+	if err != nil {
+		return h.sendText(cb.Message.Chat.ID, fmt.Sprintf("Failed to list decks: %v", err))
+	}
+	if !found {
+		_ = h.answerCallback(cb.ID, "Deck not found")
+		return nil
+	}
+	if err := h.answerCallback(cb.ID, "Done"); err != nil {
+		h.log.Warn("answer callback", "error", err)
+	}
+	h.setAwaitBatchAI(cb.From.ID, batchAwaitState{deckID: deckID})
+	msg := tgbotapi.NewMessage(cb.Message.Chat.ID, fmt.Sprintf("Input mode for deck: %s (%s->%s)\nSend newline-separated fronts in your NEXT message.\n\nExample:\nbanished\ncome up with", deck.Name, deck.LanguageFrom, deck.LanguageTo))
+	msg.ReplyMarkup = tgbotapi.ForceReply{ForceReply: true, Selective: true}
+	_, err = h.sendWithRetry(msg)
+	return err
 }
 
 func (h *handler) resolveCallbackTarget(ctx context.Context, cb *tgbotapi.CallbackQuery) (callbackTarget, bool) {
@@ -284,7 +367,10 @@ func (h *handler) handleDeckListCommand(ctx context.Context, msg *tgbotapi.Messa
 	for _, d := range decks {
 		fmt.Fprintf(&b, "- #%d %s (%s->%s)\n", d.ID, d.Name, d.LanguageFrom, d.LanguageTo)
 	}
-	return h.sendText(msg.Chat.ID, strings.TrimSpace(b.String()))
+	reply := tgbotapi.NewMessage(msg.Chat.ID, strings.TrimSpace(b.String()))
+	reply.ReplyMarkup = deckSwitchKeyboard(decks)
+	_, err = h.sendWithRetry(reply)
+	return err
 }
 
 func (h *handler) handleDeckUseCommand(ctx context.Context, msg *tgbotapi.Message, userID int64) error {
@@ -344,16 +430,41 @@ func (h *handler) handleCardAddBatchAICommand(ctx context.Context, msg *tgbotapi
 	if err != nil {
 		return h.sendText(msg.Chat.ID, err.Error())
 	}
-	generator, err := h.newAIGenerator()
+	return h.runBatchAIGeneration(ctx, msg.Chat.ID, userID, lines)
+}
+
+func (h *handler) handleBatchAIInputMessage(ctx context.Context, msg *tgbotapi.Message, userID int64, state batchAwaitState) error {
+	lines, err := parseCardAddBatchAIArgs(msg.Text)
 	if err != nil {
-		return h.sendText(msg.Chat.ID, fmt.Sprintf("Failed to configure AI: %v", err))
+		return h.sendText(msg.Chat.ID, "No valid fronts found. Tap Add batch AI and try again.")
 	}
-	report, err := h.service.AddCardsBatchAIForActiveDeckForUser(ctx, userID, generator, lines, app.BatchModeBot, false)
+	return h.runBatchAIGenerationForDeck(ctx, msg.Chat.ID, userID, state.deckID, lines)
+}
+
+func (h *handler) runBatchAIGeneration(ctx context.Context, chatID int64, userID int64, lines []string) error {
+	deck, err := h.service.ResolveActiveDeckForUser(ctx, userID)
 	if err != nil {
 		if errors.Is(err, app.ErrActiveDeckNotSet) {
-			return h.sendText(msg.Chat.ID, "Active deck is not set. Use /deck_use <name...>.")
+			return h.sendText(chatID, "Active deck is not set. Use /deck_use <name...>.")
 		}
-		return h.sendText(msg.Chat.ID, fmt.Sprintf("Failed to add cards in batch: %v", err))
+		return h.sendText(chatID, fmt.Sprintf("Failed to resolve active deck: %v", err))
+	}
+	return h.runBatchAIGenerationForDeck(ctx, chatID, userID, deck.ID, lines)
+}
+
+func (h *handler) runBatchAIGenerationForDeck(ctx context.Context, chatID int64, userID int64, deckID int64, lines []string) error {
+	generator, err := h.newAIGenerator()
+	if err != nil {
+		return h.sendText(chatID, fmt.Sprintf("Failed to configure AI: %v", err))
+	}
+	report, err := h.service.AddCardsBatchAIForUser(ctx, userID, generator, app.BatchAddAIParams{
+		DeckID: deckID,
+		Lines:  lines,
+		Mode:   app.BatchModeBot,
+		DryRun: false,
+	})
+	if err != nil {
+		return h.sendText(chatID, fmt.Sprintf("Failed to add cards in batch: %v", err))
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "Batch summary: total=%d created=%d skipped_duplicates=%d failed=%d",
@@ -372,7 +483,7 @@ func (h *handler) handleCardAddBatchAICommand(ctx context.Context, msg *tgbotapi
 		}
 		fmt.Fprintf(&b, "\n- %s => %s (%s)", item.FrontNormalized, item.Status, reason)
 	}
-	return h.sendText(msg.Chat.ID, b.String())
+	return h.sendText(chatID, b.String())
 }
 
 func (h *handler) handleNextCommand(ctx context.Context, msg *tgbotapi.Message, userID int64) error {
@@ -400,8 +511,73 @@ func (h *handler) sendNextCard(ctx context.Context, chatID int64, userID int64) 
 
 func (h *handler) sendText(chatID int64, text string) error {
 	msg := tgbotapi.NewMessage(chatID, text)
+	msg.ReplyMarkup = mainReplyKeyboard()
 	_, err := h.sendWithRetry(msg)
 	return err
+}
+
+func (h *handler) sendSwitchDeckMenu(ctx context.Context, chatID int64, userID int64) error {
+	decks, err := h.service.ListDecksForUser(ctx, userID)
+	if err != nil {
+		return h.sendText(chatID, fmt.Sprintf("Failed to list decks: %v", err))
+	}
+	if len(decks) == 0 {
+		return h.sendText(chatID, "No decks found.")
+	}
+	msg := tgbotapi.NewMessage(chatID, "Choose deck:")
+	msg.ReplyMarkup = deckSwitchKeyboard(decks)
+	_, err = h.sendWithRetry(msg)
+	return err
+}
+
+func (h *handler) sendBatchAIDeckMenu(ctx context.Context, chatID int64, userID int64) error {
+	decks, err := h.service.ListDecksForUser(ctx, userID)
+	if err != nil {
+		return h.sendText(chatID, fmt.Sprintf("Failed to list decks: %v", err))
+	}
+	if len(decks) == 0 {
+		return h.sendText(chatID, "No decks found.")
+	}
+	msg := tgbotapi.NewMessage(chatID, "Choose deck for batch AI:")
+	msg.ReplyMarkup = batchAIDeckKeyboard(decks)
+	_, err = h.sendWithRetry(msg)
+	return err
+}
+
+func (h *handler) setAwaitBatchAI(userID int64, state batchAwaitState) {
+	h.batchAwaitMu.Lock()
+	defer h.batchAwaitMu.Unlock()
+	if h.batchAwaitNext == nil {
+		h.batchAwaitNext = make(map[int64]batchAwaitState)
+	}
+	h.batchAwaitNext[userID] = state
+}
+
+func (h *handler) consumeAwaitBatchAI(userID int64) (batchAwaitState, bool) {
+	h.batchAwaitMu.Lock()
+	defer h.batchAwaitMu.Unlock()
+	if h.batchAwaitNext == nil {
+		return batchAwaitState{}, false
+	}
+	state, ok := h.batchAwaitNext[userID]
+	if !ok {
+		return batchAwaitState{}, false
+	}
+	delete(h.batchAwaitNext, userID)
+	return state, true
+}
+
+func (h *handler) findDeckForUserByID(ctx context.Context, userID int64, deckID int64) (domain.Deck, bool, error) {
+	decks, err := h.service.ListDecksForUser(ctx, userID)
+	if err != nil {
+		return domain.Deck{}, false, err
+	}
+	for _, d := range decks {
+		if d.ID == deckID {
+			return d, true, nil
+		}
+	}
+	return domain.Deck{}, false, nil
 }
 
 func (h *handler) isAllowed(userID int64) bool {
@@ -543,6 +719,35 @@ func actionKeyboard(cardID, deckID int64) tgbotapi.InlineKeyboardMarkup {
 			tgbotapi.NewInlineKeyboardButtonData("🗑️ Remove", fmt.Sprintf("act=remove;card=%d;deck=%d", cardID, deckID)),
 		),
 	)
+}
+
+func deckSwitchKeyboard(decks []domain.Deck) tgbotapi.InlineKeyboardMarkup {
+	rows := make([][]tgbotapi.InlineKeyboardButton, 0, len(decks))
+	for _, d := range decks {
+		label := fmt.Sprintf("Use %s (%s->%s)", d.Name, d.LanguageFrom, d.LanguageTo)
+		payload := fmt.Sprintf("act=use_deck;deck=%d", d.ID)
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(label, payload)))
+	}
+	return tgbotapi.NewInlineKeyboardMarkup(rows...)
+}
+
+func mainReplyKeyboard() tgbotapi.ReplyKeyboardMarkup {
+	return tgbotapi.NewReplyKeyboard(
+		tgbotapi.NewKeyboardButtonRow(
+			tgbotapi.NewKeyboardButton(switchDeckButtonText),
+			tgbotapi.NewKeyboardButton(addBatchAIButtonText),
+		),
+	)
+}
+
+func batchAIDeckKeyboard(decks []domain.Deck) tgbotapi.InlineKeyboardMarkup {
+	rows := make([][]tgbotapi.InlineKeyboardButton, 0, len(decks))
+	for _, d := range decks {
+		label := fmt.Sprintf("Add to %s (%s->%s)", d.Name, d.LanguageFrom, d.LanguageTo)
+		payload := fmt.Sprintf("act=batch_ai_deck;deck=%d", d.ID)
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(label, payload)))
+	}
+	return tgbotapi.NewInlineKeyboardMarkup(rows...)
 }
 
 func parseKVPayload(data, pairSeparator, kvSeparator string) map[string]string {
