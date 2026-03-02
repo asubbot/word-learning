@@ -647,21 +647,8 @@ func TestRegenerateRemovedCardForOwner_ReactivatesAndUpdatesEntry(t *testing.T) 
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
 
-	deck, err := store.CreateDeckForOwner(ctx, 101, "Owner Deck", "EN", "RU")
-	if err != nil {
-		t.Fatalf("CreateDeckForOwner: %v", err)
-	}
-	card, err := store.CreateCard(ctx, CardCreateParams{
-		DeckID:        deck.ID,
-		Front:         "banished",
-		Back:          "old-back",
-		Pronunciation: "/old/",
-		Example:       "old ex",
-		Conjugation:   "",
-	})
-	if err != nil {
-		t.Fatalf("CreateCard: %v", err)
-	}
+	deck := mustCreateDeckForOwnerQueryTest(t, store, ctx, 101, "Owner Deck", "EN", "RU")
+	card := mustCreateCardForQueryTest(t, store, ctx, deck.ID, "banished", "old-back", "/old/", "old ex", "")
 	if updated, err := store.SetCardStatus(ctx, card.ID, domain.CardStatusRemoved); err != nil || !updated {
 		t.Fatalf("SetCardStatus removed: updated=%v err=%v", updated, err)
 	}
@@ -684,22 +671,8 @@ func TestRegenerateRemovedCardForOwner_ReactivatesAndUpdatesEntry(t *testing.T) 
 		t.Fatal("expected removed card to be regenerated")
 	}
 
-	got, err := store.GetCardByIDForOwner(ctx, card.ID, 101)
-	if err != nil {
-		t.Fatalf("GetCardByIDForOwner: %v", err)
-	}
-	if got == nil {
-		t.Fatal("expected card to exist after regeneration")
-	}
-	if got.Status != domain.CardStatusActive {
-		t.Fatalf("expected active status, got %q", got.Status)
-	}
-	if got.Back != "new-back" || got.Pronunciation != "/new/" || got.Example != "new example" || got.Conjugation != "forms" {
-		t.Fatalf("expected updated generated fields, got %#v", got)
-	}
-	if got.NextDueAt.Before(now.Add(-1*time.Second)) || got.NextDueAt.After(now.Add(1*time.Second)) {
-		t.Fatalf("expected due time around %s, got %s", now.Format(time.RFC3339), got.NextDueAt.Format(time.RFC3339))
-	}
+	got := mustGetCardByIDForOwnerQueryTest(t, store, ctx, card.ID, 101)
+	assertRegeneratedCardFields(t, got, now)
 }
 
 func TestRegenerateRemovedCardForOwner_ActiveDuplicateReturnsFalse(t *testing.T) {
@@ -766,5 +739,47 @@ func TestRegenerateRemovedCardForOwner_InvalidFront(t *testing.T) {
 	}
 	if regenerated {
 		t.Fatal("expected regenerate=false for invalid input")
+	}
+}
+
+func mustCreateDeckForOwnerQueryTest(
+	t *testing.T,
+	store *Store,
+	ctx context.Context,
+	telegramUserID int64,
+	name string,
+	languageFrom string,
+	languageTo string,
+) domain.Deck {
+	t.Helper()
+	deck, err := store.CreateDeckForOwner(ctx, telegramUserID, name, languageFrom, languageTo)
+	if err != nil {
+		t.Fatalf("CreateDeckForOwner: %v", err)
+	}
+	return deck
+}
+
+func mustGetCardByIDForOwnerQueryTest(t *testing.T, store *Store, ctx context.Context, cardID int64, telegramUserID int64) *domain.Card {
+	t.Helper()
+	card, err := store.GetCardByIDForOwner(ctx, cardID, telegramUserID)
+	if err != nil {
+		t.Fatalf("GetCardByIDForOwner: %v", err)
+	}
+	return card
+}
+
+func assertRegeneratedCardFields(t *testing.T, got *domain.Card, now time.Time) {
+	t.Helper()
+	if got == nil {
+		t.Fatal("expected card to exist after regeneration")
+	}
+	if got.Status != domain.CardStatusActive {
+		t.Fatalf("expected active status, got %q", got.Status)
+	}
+	if got.Back != "new-back" || got.Pronunciation != "/new/" || got.Example != "new example" || got.Conjugation != "forms" {
+		t.Fatalf("expected updated generated fields, got %#v", got)
+	}
+	if got.NextDueAt.Before(now.Add(-1*time.Second)) || got.NextDueAt.After(now.Add(1*time.Second)) {
+		t.Fatalf("expected due time around %s, got %s", now.Format(time.RFC3339), got.NextDueAt.Format(time.RFC3339))
 	}
 }
