@@ -276,6 +276,9 @@ func TestGetDeckByID(t *testing.T) {
 	if got == nil || got.ID != d1.ID || got.TelegramUserID != 101 || got.Name != "Deck1" {
 		t.Fatalf("unexpected deck: %#v", got)
 	}
+	if got.CreatedAt.IsZero() || got.UpdatedAt.IsZero() {
+		t.Fatalf("deck read from store must have non-zero CreatedAt and UpdatedAt; got CreatedAt=%v UpdatedAt=%v", got.CreatedAt, got.UpdatedAt)
+	}
 
 	missing, err := store.GetDeckByID(ctx, d1.ID+9999)
 	if err != nil {

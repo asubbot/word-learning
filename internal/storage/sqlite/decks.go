@@ -47,7 +47,7 @@ func (s *Store) ListDecks(ctx context.Context) (decks []domain.Deck, err error) 
 func (s *Store) ListDecksAll(ctx context.Context) (decks []domain.Deck, err error) {
 	rows, err := s.db.QueryContext(
 		ctx,
-		`SELECT telegram_user_id, id, name, language_from, language_to
+		`SELECT telegram_user_id, id, name, language_from, language_to, created_at, updated_at
 		 FROM decks
 		 ORDER BY id ASC`,
 	)
@@ -63,7 +63,7 @@ func (s *Store) ListDecksAll(ctx context.Context) (decks []domain.Deck, err erro
 	decks = make([]domain.Deck, 0)
 	for rows.Next() {
 		var d domain.Deck
-		if err := rows.Scan(&d.TelegramUserID, &d.ID, &d.Name, &d.LanguageFrom, &d.LanguageTo); err != nil {
+		if err := rows.Scan(&d.TelegramUserID, &d.ID, &d.Name, &d.LanguageFrom, &d.LanguageTo, &d.CreatedAt, &d.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan deck row: %w", err)
 		}
 		d.Name = strings.TrimSpace(d.Name)
@@ -78,13 +78,13 @@ func (s *Store) ListDecksAll(ctx context.Context) (decks []domain.Deck, err erro
 func (s *Store) GetDeckByID(ctx context.Context, deckID int64) (*domain.Deck, error) {
 	row := s.db.QueryRowContext(
 		ctx,
-		`SELECT telegram_user_id, id, name, language_from, language_to
+		`SELECT telegram_user_id, id, name, language_from, language_to, created_at, updated_at
 		 FROM decks
 		 WHERE id = ?`,
 		deckID,
 	)
 	var d domain.Deck
-	if err := row.Scan(&d.TelegramUserID, &d.ID, &d.Name, &d.LanguageFrom, &d.LanguageTo); err != nil {
+	if err := row.Scan(&d.TelegramUserID, &d.ID, &d.Name, &d.LanguageFrom, &d.LanguageTo, &d.CreatedAt, &d.UpdatedAt); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
@@ -97,7 +97,7 @@ func (s *Store) GetDeckByID(ctx context.Context, deckID int64) (*domain.Deck, er
 func (s *Store) ListDecksForOwner(ctx context.Context, telegramUserID int64) (decks []domain.Deck, err error) {
 	rows, err := s.db.QueryContext(
 		ctx,
-		`SELECT telegram_user_id, id, name, language_from, language_to
+		`SELECT telegram_user_id, id, name, language_from, language_to, created_at, updated_at
 		 FROM decks
 		 WHERE telegram_user_id = ?
 		 ORDER BY id ASC`,
@@ -115,7 +115,7 @@ func (s *Store) ListDecksForOwner(ctx context.Context, telegramUserID int64) (de
 	decks = make([]domain.Deck, 0)
 	for rows.Next() {
 		var d domain.Deck
-		if err := rows.Scan(&d.TelegramUserID, &d.ID, &d.Name, &d.LanguageFrom, &d.LanguageTo); err != nil {
+		if err := rows.Scan(&d.TelegramUserID, &d.ID, &d.Name, &d.LanguageFrom, &d.LanguageTo, &d.CreatedAt, &d.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan deck row: %w", err)
 		}
 		d.Name = strings.TrimSpace(d.Name)
@@ -145,14 +145,14 @@ func (s *Store) DeckExistsForOwner(ctx context.Context, deckID int64, telegramUs
 func (s *Store) GetDeckForOwner(ctx context.Context, deckID int64, telegramUserID int64) (*domain.Deck, error) {
 	row := s.db.QueryRowContext(
 		ctx,
-		`SELECT telegram_user_id, id, name, language_from, language_to
+		`SELECT telegram_user_id, id, name, language_from, language_to, created_at, updated_at
 		 FROM decks
 		 WHERE id = ? AND telegram_user_id = ?`,
 		deckID,
 		telegramUserID,
 	)
 	var d domain.Deck
-	if err := row.Scan(&d.TelegramUserID, &d.ID, &d.Name, &d.LanguageFrom, &d.LanguageTo); err != nil {
+	if err := row.Scan(&d.TelegramUserID, &d.ID, &d.Name, &d.LanguageFrom, &d.LanguageTo, &d.CreatedAt, &d.UpdatedAt); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
@@ -188,14 +188,14 @@ func (s *Store) ClearActiveDeckForUser(ctx context.Context, userID int64) error 
 func (s *Store) GetActiveDeckForUser(ctx context.Context, userID int64) (*domain.Deck, error) {
 	row := s.db.QueryRowContext(
 		ctx,
-		`SELECT d.telegram_user_id, d.id, d.name, d.language_from, d.language_to
+		`SELECT d.telegram_user_id, d.id, d.name, d.language_from, d.language_to, d.created_at, d.updated_at
 		 FROM active_decks a
 		 INNER JOIN decks d ON d.id = a.deck_id
 		 WHERE a.user_id = ?`,
 		userID,
 	)
 	var d domain.Deck
-	if err := row.Scan(&d.TelegramUserID, &d.ID, &d.Name, &d.LanguageFrom, &d.LanguageTo); err != nil {
+	if err := row.Scan(&d.TelegramUserID, &d.ID, &d.Name, &d.LanguageFrom, &d.LanguageTo, &d.CreatedAt, &d.UpdatedAt); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
@@ -208,7 +208,7 @@ func (s *Store) GetActiveDeckForUser(ctx context.Context, userID int64) (*domain
 func (s *Store) FindDeckByExactNameForOwner(ctx context.Context, telegramUserID int64, name string) (*domain.Deck, error) {
 	row := s.db.QueryRowContext(
 		ctx,
-		`SELECT telegram_user_id, id, name, language_from, language_to
+		`SELECT telegram_user_id, id, name, language_from, language_to, created_at, updated_at
 		 FROM decks
 		 WHERE telegram_user_id = ?
 		   AND lower(trim(name)) = lower(trim(?))
@@ -218,7 +218,7 @@ func (s *Store) FindDeckByExactNameForOwner(ctx context.Context, telegramUserID 
 		name,
 	)
 	var d domain.Deck
-	if err := row.Scan(&d.TelegramUserID, &d.ID, &d.Name, &d.LanguageFrom, &d.LanguageTo); err != nil {
+	if err := row.Scan(&d.TelegramUserID, &d.ID, &d.Name, &d.LanguageFrom, &d.LanguageTo, &d.CreatedAt, &d.UpdatedAt); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
@@ -239,7 +239,7 @@ func (s *Store) FindDeckCandidatesForOwner(ctx context.Context, telegramUserID i
 	pattern := "%" + strings.ToLower(trimmed) + "%"
 	rows, err := s.db.QueryContext(
 		ctx,
-		`SELECT telegram_user_id, id, name, language_from, language_to
+		`SELECT telegram_user_id, id, name, language_from, language_to, created_at, updated_at
 		 FROM decks
 		 WHERE telegram_user_id = ?
 		   AND lower(name) LIKE ?
@@ -261,7 +261,7 @@ func (s *Store) FindDeckCandidatesForOwner(ctx context.Context, telegramUserID i
 	decks = make([]domain.Deck, 0)
 	for rows.Next() {
 		var d domain.Deck
-		if scanErr := rows.Scan(&d.TelegramUserID, &d.ID, &d.Name, &d.LanguageFrom, &d.LanguageTo); scanErr != nil {
+		if scanErr := rows.Scan(&d.TelegramUserID, &d.ID, &d.Name, &d.LanguageFrom, &d.LanguageTo, &d.CreatedAt, &d.UpdatedAt); scanErr != nil {
 			return nil, fmt.Errorf("scan candidate deck row: %w", scanErr)
 		}
 		d.Name = strings.TrimSpace(d.Name)
