@@ -52,6 +52,8 @@ go run ./cmd/wordbot
 | **Start learning** | List of your decks (inline); tap one → it becomes active and the next card is shown. |
 | **Add batch AI** | Choose deck (inline); then send one message with one word, phrase, or context sentence per line (see **Phrase and context mode** below). Bot fills back/pronunciation/example via AI. |
 
+**Reminders:** The bot can notify you when it's time to review. It checks periodically (default: every 60 minutes) and sends a message only if you have at least 10 overdue cards and at least 12 hours have passed since your last review (to avoid spam). Optional env: `REMINDER_INTERVAL_MINUTES` (default 60), `REMINDER_MIN_OVERDUE` (default 10), `REMINDER_MIN_HOURS_SINCE_REVIEW` (default 12).
+
 **Slash commands**
 
 | Command | Parameters | Description |

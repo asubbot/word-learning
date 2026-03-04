@@ -678,3 +678,110 @@ func TestBotSwitchDeckButtonCaseInsensitiveAndTrimmed(t *testing.T) {
 		t.Fatalf("expected choose deck text, got %q", last.Text)
 	}
 }
+
+func TestRunReminderTick_EligibleUserGetsMessage(t *testing.T) {
+	t.Parallel()
+
+	h, api := newTestHandler(t)
+	ctx := context.Background()
+
+	h.allow = buildAllowlist([]int64{42})
+	if _, err := h.service.CreateDeckForUser(ctx, 42, "Deck", "EN", "RU"); err != nil {
+		t.Fatalf("CreateDeckForUser: %v", err)
+	}
+	if _, err := h.service.DeckUseForUser(ctx, 42, "Deck"); err != nil {
+		t.Fatalf("DeckUseForUser: %v", err)
+	}
+	for i := 0; i < 10; i++ {
+		front := fmt.Sprintf("word%d", i)
+		if _, err := h.service.AddCardForActiveDeckForUser(ctx, 42, front, "back", "", "", ""); err != nil {
+			t.Fatalf("AddCardForActiveDeckForUser: %v", err)
+		}
+	}
+
+	before := len(api.sentConfigs)
+	runReminderTick(ctx, h, 10, 12)
+	if len(api.sentConfigs) != before+1 {
+		t.Fatalf("expected 1 reminder message; got %d new messages", len(api.sentConfigs)-before)
+	}
+	last := api.sentConfigs[len(api.sentConfigs)-1]
+	if last.ChatID != 42 {
+		t.Fatalf("expected chat ID 42; got %d", last.ChatID)
+	}
+	if !strings.Contains(last.Text, "Start learning") {
+		t.Fatalf("expected message to contain 'Start learning'; got %q", last.Text)
+	}
+	if !strings.Contains(last.Text, "cards due for review") {
+		t.Fatalf("expected message to contain 'cards due for review'; got %q", last.Text)
+	}
+}
+
+func TestRunReminderTick_NotEligibleNoMessage(t *testing.T) {
+	t.Parallel()
+
+	h, api := newTestHandler(t)
+	ctx := context.Background()
+
+	h.allow = buildAllowlist([]int64{42})
+	if _, err := h.service.CreateDeckForUser(ctx, 42, "Deck", "EN", "RU"); err != nil {
+		t.Fatalf("CreateDeckForUser: %v", err)
+	}
+	if _, err := h.service.DeckUseForUser(ctx, 42, "Deck"); err != nil {
+		t.Fatalf("DeckUseForUser: %v", err)
+	}
+	for i := 0; i < 5; i++ {
+		front := fmt.Sprintf("w%d", i)
+		if _, err := h.service.AddCardForActiveDeckForUser(ctx, 42, front, "b", "", "", ""); err != nil {
+			t.Fatalf("AddCardForActiveDeckForUser: %v", err)
+		}
+	}
+
+	before := len(api.sentConfigs)
+	runReminderTick(ctx, h, 10, 12)
+	if len(api.sentConfigs) != before {
+		t.Fatalf("expected no reminder when not eligible; got %d new messages", len(api.sentConfigs)-before)
+	}
+}
+
+func TestRunReminderTick_MultipleUsersOnlyEligibleGetsMessage(t *testing.T) {
+	t.Parallel()
+
+	h, api := newTestHandler(t)
+	ctx := context.Background()
+
+	h.allow = buildAllowlist([]int64{42, 43})
+
+	if _, err := h.service.CreateDeckForUser(ctx, 42, "D42", "EN", "RU"); err != nil {
+		t.Fatalf("CreateDeckForUser 42: %v", err)
+	}
+	if _, err := h.service.DeckUseForUser(ctx, 42, "D42"); err != nil {
+		t.Fatalf("DeckUseForUser 42: %v", err)
+	}
+	for i := 0; i < 10; i++ {
+		if _, err := h.service.AddCardForActiveDeckForUser(ctx, 42, fmt.Sprintf("a%d", i), "x", "", "", ""); err != nil {
+			t.Fatalf("AddCardForActiveDeckForUser 42: %v", err)
+		}
+	}
+
+	if _, err := h.service.CreateDeckForUser(ctx, 43, "D43", "EN", "RU"); err != nil {
+		t.Fatalf("CreateDeckForUser 43: %v", err)
+	}
+	if _, err := h.service.DeckUseForUser(ctx, 43, "D43"); err != nil {
+		t.Fatalf("DeckUseForUser 43: %v", err)
+	}
+	for i := 0; i < 3; i++ {
+		if _, err := h.service.AddCardForActiveDeckForUser(ctx, 43, fmt.Sprintf("b%d", i), "y", "", "", ""); err != nil {
+			t.Fatalf("AddCardForActiveDeckForUser 43: %v", err)
+		}
+	}
+
+	before := len(api.sentConfigs)
+	runReminderTick(ctx, h, 10, 12)
+	if len(api.sentConfigs) != before+1 {
+		t.Fatalf("expected 1 reminder; got %d new messages", len(api.sentConfigs)-before)
+	}
+	last := api.sentConfigs[len(api.sentConfigs)-1]
+	if last.ChatID != 42 {
+		t.Fatalf("expected reminder to user 42 only; got chat ID %d", last.ChatID)
+	}
+}

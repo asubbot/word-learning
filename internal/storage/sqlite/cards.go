@@ -363,6 +363,39 @@ func (s *Store) DeckCardStatsForOwner(ctx context.Context, deckID int64, telegra
 	return stats, nil
 }
 
+func (s *Store) UserOverdueAndLastReview(ctx context.Context, telegramUserID int64, now time.Time) (overdueCount int, lastReviewedAt *time.Time, err error) {
+	var lastReviewRaw sql.NullString
+	err = s.db.QueryRowContext(
+		ctx,
+		`SELECT
+			COALESCE(SUM(CASE WHEN c.status = 'active' AND c.next_due_at <= ? THEN 1 ELSE 0 END), 0),
+			MAX(c.last_reviewed_at)
+		 FROM cards c
+		 INNER JOIN decks d ON d.id = c.deck_id
+		 WHERE d.telegram_user_id = ?`,
+		now.UTC(),
+		telegramUserID,
+	).Scan(&overdueCount, &lastReviewRaw)
+	if err != nil {
+		return 0, nil, fmt.Errorf("user overdue and last review: %w", err)
+	}
+	if lastReviewRaw.Valid && lastReviewRaw.String != "" {
+		for _, layout := range []string{
+			"2006-01-02 15:04:05.999999999 -0700 MST",
+			"2006-01-02 15:04:05.999999999",
+			"2006-01-02 15:04:05",
+			time.RFC3339Nano,
+			time.RFC3339,
+		} {
+			if parsed, parseErr := time.Parse(layout, lastReviewRaw.String); parseErr == nil {
+				lastReviewedAt = &parsed
+				break
+			}
+		}
+	}
+	return overdueCount, lastReviewedAt, nil
+}
+
 func scanCard(scanner interface{ Scan(dest ...any) error }) (domain.Card, error) {
 	var card domain.Card
 	var status string

@@ -8,10 +8,13 @@ import (
 )
 
 type Config struct {
-	TelegramBotToken string
-	DBPath           string
-	PollingTimeout   int
-	AllowedUserIDs   []int64
+	TelegramBotToken            string
+	DBPath                      string
+	PollingTimeout              int
+	AllowedUserIDs              []int64
+	ReminderIntervalMin         int
+	ReminderMinOverdue          int
+	ReminderMinHoursSinceReview float64
 }
 
 func LoadConfigFromEnv() (Config, error) {
@@ -31,12 +34,27 @@ func LoadConfigFromEnv() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	reminderIntervalMin, err := parsePositiveIntEnvWithDefault("REMINDER_INTERVAL_MINUTES", 60)
+	if err != nil {
+		return Config{}, err
+	}
+	reminderMinOverdue, err := parsePositiveIntEnvWithDefault("REMINDER_MIN_OVERDUE", 10)
+	if err != nil {
+		return Config{}, err
+	}
+	reminderMinHours, err := parseFloatEnvWithDefault("REMINDER_MIN_HOURS_SINCE_REVIEW", 12)
+	if err != nil {
+		return Config{}, err
+	}
 
 	return Config{
-		TelegramBotToken: token,
-		DBPath:           dbPath,
-		PollingTimeout:   pollingTimeout,
-		AllowedUserIDs:   allowedUserIDs,
+		TelegramBotToken:            token,
+		DBPath:                      dbPath,
+		PollingTimeout:              pollingTimeout,
+		AllowedUserIDs:              allowedUserIDs,
+		ReminderIntervalMin:         reminderIntervalMin,
+		ReminderMinOverdue:          reminderMinOverdue,
+		ReminderMinHoursSinceReview: reminderMinHours,
 	}, nil
 }
 
@@ -56,6 +74,18 @@ func parsePositiveIntEnvWithDefault(name string, defaultValue int) (int, error) 
 	parsed, err := strconv.Atoi(raw)
 	if err != nil || parsed <= 0 {
 		return 0, fmt.Errorf("%s must be a positive integer", name)
+	}
+	return parsed, nil
+}
+
+func parseFloatEnvWithDefault(name string, defaultValue float64) (float64, error) {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return defaultValue, nil
+	}
+	parsed, err := strconv.ParseFloat(raw, 64)
+	if err != nil || parsed < 0 {
+		return 0, fmt.Errorf("%s must be a non-negative number", name)
 	}
 	return parsed, nil
 }

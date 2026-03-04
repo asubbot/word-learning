@@ -106,6 +106,8 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		newAIGenerator: ai.NewGeneratorFromEnv,
 	}
 
+	go runReminderLoop(ctx, h, cfg.ReminderIntervalMin, cfg.ReminderMinOverdue, cfg.ReminderMinHoursSinceReview)
+
 	updateCfg := tgbotapi.NewUpdate(0)
 	updateCfg.Timeout = cfg.PollingTimeout
 	updates := api.GetUpdatesChan(updateCfg)
@@ -514,6 +516,46 @@ func (h *handler) sendText(chatID int64, text string) error {
 	msg.ReplyMarkup = mainReplyKeyboard()
 	_, err := h.sendWithRetry(msg)
 	return err
+}
+
+func (h *handler) sendReminderMessage(chatID int64, text string) error {
+	msg := tgbotapi.NewMessage(chatID, text)
+	_, err := h.sendWithRetry(msg)
+	return err
+}
+
+func runReminderLoop(ctx context.Context, h *handler, intervalMin int, minOverdue int, minHoursSinceReview float64) {
+	if intervalMin <= 0 {
+		return
+	}
+	ticker := time.NewTicker(time.Duration(intervalMin) * time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			runReminderTick(ctx, h, minOverdue, minHoursSinceReview)
+		}
+	}
+}
+
+func runReminderTick(ctx context.Context, h *handler, minOverdue int, minHoursSinceReview float64) {
+	now := time.Now()
+	for userID := range h.allow {
+		eligible, overdueCount, err := h.service.ReminderEligible(ctx, userID, now, minOverdue, minHoursSinceReview)
+		if err != nil {
+			h.log.Warn("reminder check", "user_id", userID, "error", err)
+			continue
+		}
+		if !eligible {
+			continue
+		}
+		text := fmt.Sprintf("You have %d cards due for review. Tap Start learning to continue.", overdueCount)
+		if err := h.sendReminderMessage(userID, text); err != nil {
+			h.log.Warn("send reminder", "user_id", userID, "error", err)
+		}
+	}
 }
 
 func (h *handler) sendSwitchDeckMenu(ctx context.Context, chatID int64, userID int64) error {
