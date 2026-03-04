@@ -131,74 +131,53 @@ func (s *Service) RemoveCard(ctx context.Context, cardID int64) error {
 	return s.RemoveCardForUser(ctx, 0, cardID)
 }
 
-func (s *Service) RemoveCardByID(ctx context.Context, cardID int64) error {
+// resolveCardAndDeck fetches the card by ID and its deck; returns ErrCardNotFound or deck-not-found error if missing.
+func (s *Service) resolveCardAndDeck(ctx context.Context, cardID int64) (*domain.Card, *domain.Deck, error) {
 	card, err := s.store.GetCardByID(ctx, cardID)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	if card == nil {
-		return ErrCardNotFound
+		return nil, nil, ErrCardNotFound
 	}
 	deck, err := s.store.GetDeckByID(ctx, card.DeckID)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	if deck == nil {
-		return fmt.Errorf("deck %d not found", card.DeckID)
+		return nil, nil, fmt.Errorf("deck %d not found", card.DeckID)
+	}
+	return card, deck, nil
+}
+
+func (s *Service) RemoveCardByID(ctx context.Context, cardID int64) error {
+	_, deck, err := s.resolveCardAndDeck(ctx, cardID)
+	if err != nil {
+		return err
 	}
 	return s.RemoveCardForUser(ctx, deck.TelegramUserID, cardID)
 }
 
 func (s *Service) RestoreCardByID(ctx context.Context, cardID int64) error {
-	card, err := s.store.GetCardByID(ctx, cardID)
+	_, deck, err := s.resolveCardAndDeck(ctx, cardID)
 	if err != nil {
 		return err
-	}
-	if card == nil {
-		return ErrCardNotFound
-	}
-	deck, err := s.store.GetDeckByID(ctx, card.DeckID)
-	if err != nil {
-		return err
-	}
-	if deck == nil {
-		return fmt.Errorf("deck %d not found", card.DeckID)
 	}
 	return s.RestoreCardForUser(ctx, deck.TelegramUserID, cardID)
 }
 
 func (s *Service) RememberCardByID(ctx context.Context, cardID int64) error {
-	card, err := s.store.GetCardByID(ctx, cardID)
+	_, deck, err := s.resolveCardAndDeck(ctx, cardID)
 	if err != nil {
 		return err
-	}
-	if card == nil {
-		return ErrCardNotFound
-	}
-	deck, err := s.store.GetDeckByID(ctx, card.DeckID)
-	if err != nil {
-		return err
-	}
-	if deck == nil {
-		return fmt.Errorf("deck %d not found", card.DeckID)
 	}
 	return s.RememberCardForUser(ctx, deck.TelegramUserID, cardID)
 }
 
 func (s *Service) DontRememberCardByID(ctx context.Context, cardID int64) error {
-	card, err := s.store.GetCardByID(ctx, cardID)
+	_, deck, err := s.resolveCardAndDeck(ctx, cardID)
 	if err != nil {
 		return err
-	}
-	if card == nil {
-		return ErrCardNotFound
-	}
-	deck, err := s.store.GetDeckByID(ctx, card.DeckID)
-	if err != nil {
-		return err
-	}
-	if deck == nil {
-		return fmt.Errorf("deck %d not found", card.DeckID)
 	}
 	return s.DontRememberCardForUser(ctx, deck.TelegramUserID, cardID)
 }
