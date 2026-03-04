@@ -10,11 +10,20 @@ QUIET=
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-DB_PATH="${WORDLEARN_DB_PATH:-$ROOT/data/readme-check.db}"
-mkdir -p "$(dirname "$DB_PATH")"
-rm -f "$DB_PATH"
+# Always use a dedicated test DB; never use WORDLEARN_DB_PATH so we never touch the user's DB.
+TEST_DB_PATH="$ROOT/data/readme-check.db"
+if [[ -n "${WORDLEARN_DB_PATH:-}" ]]; then
+  ENV_ABS="$(cd "$(dirname "$WORDLEARN_DB_PATH")" 2>/dev/null && pwd)/$(basename "$WORDLEARN_DB_PATH")"
+  if [[ "$ENV_ABS" = "$TEST_DB_PATH" ]]; then
+    echo "Error: WORDLEARN_DB_PATH must not point to the test DB (data/readme-check.db). Unset it or use another path." >&2
+    exit 1
+  fi
+fi
 
-export WORDLEARN_DB_PATH="$DB_PATH"
+mkdir -p "$(dirname "$TEST_DB_PATH")"
+rm -f "$TEST_DB_PATH"
+
+export WORDLEARN_DB_PATH="$TEST_DB_PATH"
 
 run() {
   if [[ -n "$QUIET" ]]; then
@@ -44,5 +53,5 @@ run card list --status removed
 run card restore --id 1
 run card list --status active
 
-rm -f "$DB_PATH"
+rm -f "$TEST_DB_PATH"
 echo "README check OK"
