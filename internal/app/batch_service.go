@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"word-learning-cli/internal/ai"
+	"word-learning-cli/internal/domain"
 )
 
 type BatchAddAIParams struct {
@@ -64,85 +65,83 @@ func (s *Service) AddCardsBatchAIForUser(ctx context.Context, telegramUserID int
 	fronts := NormalizeBatchFronts(params.Lines, params.Mode)
 	report := BatchAddReport{Items: make([]BatchAddItemResult, 0, len(fronts))}
 	for _, front := range fronts {
-		item := BatchAddItemResult{
-			FrontRaw:        front,
-			FrontNormalized: front,
-		}
-		generated, genErr := generator.GenerateCard(ctx, ai.GenerateCardRequest{
-			LanguageFrom: deck.LanguageFrom,
-			LanguageTo:   deck.LanguageTo,
-			Front:        front,
-		})
-		if genErr != nil {
-			item.Status = BatchAddStatusFailedGeneration
-			item.Reason = genErr.Error()
-			report.AddItem(item)
-			continue
-		}
-
-		generatedFront := strings.TrimSpace(generated.Front)
-		back := strings.TrimSpace(generated.Back)
-		pronunciation := strings.TrimSpace(generated.Pronunciation)
-		example := strings.TrimSpace(generated.Example)
-		conjugation := strings.TrimSpace(generated.Conjugation)
-		if generatedFront == "" {
-			item.Status = BatchAddStatusFailedValidation
-			item.Reason = "generated front is empty"
-			report.AddItem(item)
-			continue
-		}
-		if back == "" {
-			item.Status = BatchAddStatusFailedValidation
-			item.Reason = "generated back is empty"
-			report.AddItem(item)
-			continue
-		}
-		item.FrontNormalized = generatedFront
-
-		if params.DryRun {
-			item.Status = BatchAddStatusCreated
-			report.AddItem(item)
-			continue
-		}
-
-		_, addErr := s.AddCardForUser(ctx, telegramUserID, params.DeckID, generatedFront, back, pronunciation, example, conjugation)
-		if addErr == nil {
-			item.Status = BatchAddStatusCreated
-			report.AddItem(item)
-			continue
-		}
-		if errors.Is(addErr, ErrCardAlreadyExists) {
-			regenerated, regenErr := s.store.RegenerateRemovedCardForOwner(
-				ctx,
-				params.DeckID,
-				telegramUserID,
-				generatedFront,
-				back,
-				pronunciation,
-				example,
-				conjugation,
-				time.Now().UTC(),
-			)
-			if regenErr != nil {
-				item.Status = BatchAddStatusFailedValidation
-				item.Reason = regenErr.Error()
-				report.AddItem(item)
-				continue
-			}
-			if regenerated {
-				item.Status = BatchAddStatusCreated
-				report.AddItem(item)
-				continue
-			}
-			item.Status = BatchAddStatusDuplicate
-			item.Reason = addErr.Error()
-			report.AddItem(item)
-			continue
-		}
-		item.Status = BatchAddStatusFailedValidation
-		item.Reason = addErr.Error()
+		item := s.processBatchFront(ctx, telegramUserID, generator, params, deck, front)
 		report.AddItem(item)
 	}
 
 	return report, nil
+}
+
+// processBatchFront generates and optionally persists one card for a batch front; returns the item result.
+func (s *Service) processBatchFront(ctx context.Context, telegramUserID int64, generator ai.Generator, params BatchAddAIParams, deck *domain.Deck, front string) BatchAddItemResult {
+	item := BatchAddItemResult{
+		FrontRaw:        front,
+		FrontNormalized: front,
+	}
+	generated, genErr := generator.GenerateCard(ctx, ai.GenerateCardRequest{
+		LanguageFrom: deck.LanguageFrom,
+		LanguageTo:   deck.LanguageTo,
+		Front:        front,
+	})
+	if genErr != nil {
+		item.Status = BatchAddStatusFailedGeneration
+		item.Reason = genErr.Error()
+		return item
+	}
+
+	generatedFront := strings.TrimSpace(generated.Front)
+	back := strings.TrimSpace(generated.Back)
+	pronunciation := strings.TrimSpace(generated.Pronunciation)
+	example := strings.TrimSpace(generated.Example)
+	conjugation := strings.TrimSpace(generated.Conjugation)
+	if generatedFront == "" {
+		item.Status = BatchAddStatusFailedValidation
+		item.Reason = "generated front is empty"
+		return item
+	}
+	if back == "" {
+		item.Status = BatchAddStatusFailedValidation
+		item.Reason = "generated back is empty"
+		return item
+	}
+	item.FrontNormalized = generatedFront
+
+	if params.DryRun {
+		item.Status = BatchAddStatusCreated
+		return item
+	}
+
+	_, addErr := s.AddCardForUser(ctx, telegramUserID, params.DeckID, generatedFront, back, pronunciation, example, conjugation)
+	if addErr == nil {
+		item.Status = BatchAddStatusCreated
+		return item
+	}
+	if errors.Is(addErr, ErrCardAlreadyExists) {
+		regenerated, regenErr := s.store.RegenerateRemovedCardForOwner(
+			ctx,
+			params.DeckID,
+			telegramUserID,
+			generatedFront,
+			back,
+			pronunciation,
+			example,
+			conjugation,
+			time.Now().UTC(),
+		)
+		if regenErr != nil {
+			item.Status = BatchAddStatusFailedValidation
+			item.Reason = regenErr.Error()
+			return item
+		}
+		if regenerated {
+			item.Status = BatchAddStatusCreated
+			return item
+		}
+		item.Status = BatchAddStatusDuplicate
+		item.Reason = addErr.Error()
+		return item
+	}
+	item.Status = BatchAddStatusFailedValidation
+	item.Reason = addErr.Error()
+	return item
 }

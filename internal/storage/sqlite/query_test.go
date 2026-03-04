@@ -106,35 +106,16 @@ func TestDeckCardStats(t *testing.T) {
 
 	store := newTestStore(t)
 	ctx := context.Background()
+	deck := mustCreateDeckQueryTest(t, store, ctx, "Deck", "EN", "RU")
 
-	deck, err := store.CreateDeck(ctx, "Deck", "EN", "RU")
-	if err != nil {
-		t.Fatalf("CreateDeck: %v", err)
-	}
-
-	dueCard, err := store.CreateCard(ctx, CardCreateParams{DeckID: deck.ID, Front: "a", Back: "a"})
-	if err != nil {
-		t.Fatalf("CreateCard due: %v", err)
-	}
-	postponedCard, err := store.CreateCard(ctx, CardCreateParams{DeckID: deck.ID, Front: "b", Back: "b"})
-	if err != nil {
-		t.Fatalf("CreateCard postponed: %v", err)
-	}
-	removedCard, err := store.CreateCard(ctx, CardCreateParams{DeckID: deck.ID, Front: "c", Back: "c"})
-	if err != nil {
-		t.Fatalf("CreateCard removed: %v", err)
-	}
+	dueCard := mustCreateCardQueryTest(t, store, ctx, deck.ID, "a", "a")
+	postponedCard := mustCreateCardQueryTest(t, store, ctx, deck.ID, "b", "b")
+	removedCard := mustCreateCardQueryTest(t, store, ctx, deck.ID, "c", "c")
 
 	now := time.Now().UTC()
-	if updated, err := store.UpdateCardSchedule(ctx, dueCard.ID, now.Add(-time.Minute), 600, 2.3, 1, now); err != nil || !updated {
-		t.Fatalf("UpdateCardSchedule due: updated=%v err=%v", updated, err)
-	}
-	if updated, err := store.UpdateCardSchedule(ctx, postponedCard.ID, now.Add(10*time.Minute), 600, 2.3, 1, now); err != nil || !updated {
-		t.Fatalf("UpdateCardSchedule postponed: updated=%v err=%v", updated, err)
-	}
-	if updated, err := store.SetCardStatus(ctx, removedCard.ID, domain.CardStatusRemoved); err != nil || !updated {
-		t.Fatalf("SetCardStatus removed: updated=%v err=%v", updated, err)
-	}
+	mustUpdateCardScheduleQueryTest(t, store, ctx, dueCard.ID, now.Add(-time.Minute), 600, 2.3, 1, now)
+	mustUpdateCardScheduleQueryTest(t, store, ctx, postponedCard.ID, now.Add(10*time.Minute), 600, 2.3, 1, now)
+	mustSetCardStatusQueryTest(t, store, ctx, removedCard.ID, domain.CardStatusRemoved)
 
 	stats, err := store.DeckCardStats(ctx, deck.ID, now)
 	if err != nil {
@@ -142,6 +123,40 @@ func TestDeckCardStats(t *testing.T) {
 	}
 	if stats.Active != 1 || stats.Postponed != 1 || stats.Total != 2 {
 		t.Fatalf("unexpected stats: %#v", stats)
+	}
+}
+
+func mustCreateDeckQueryTest(t *testing.T, store *Store, ctx context.Context, name, languageFrom, languageTo string) domain.Deck {
+	t.Helper()
+	deck, err := store.CreateDeck(ctx, name, languageFrom, languageTo)
+	if err != nil {
+		t.Fatalf("CreateDeck: %v", err)
+	}
+	return deck
+}
+
+func mustCreateCardQueryTest(t *testing.T, store *Store, ctx context.Context, deckID int64, front, back string) domain.Card {
+	t.Helper()
+	c, err := store.CreateCard(ctx, CardCreateParams{DeckID: deckID, Front: front, Back: back})
+	if err != nil {
+		t.Fatalf("CreateCard: %v", err)
+	}
+	return c
+}
+
+func mustUpdateCardScheduleQueryTest(t *testing.T, store *Store, ctx context.Context, cardID int64, due time.Time, intervalSec int64, ease float64, reps int64, updated time.Time) {
+	t.Helper()
+	ok, err := store.UpdateCardSchedule(ctx, cardID, due, intervalSec, ease, reps, updated)
+	if err != nil || !ok {
+		t.Fatalf("UpdateCardSchedule: updated=%v err=%v", ok, err)
+	}
+}
+
+func mustSetCardStatusQueryTest(t *testing.T, store *Store, ctx context.Context, cardID int64, status domain.CardStatus) {
+	t.Helper()
+	ok, err := store.SetCardStatus(ctx, cardID, status)
+	if err != nil || !ok {
+		t.Fatalf("SetCardStatus: updated=%v err=%v", ok, err)
 	}
 }
 
@@ -227,18 +242,9 @@ func TestListDecksAll(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
 
-	d0, err := store.CreateDeck(ctx, "CLI Deck", "EN", "RU")
-	if err != nil {
-		t.Fatalf("CreateDeck: %v", err)
-	}
-	d1, err := store.CreateDeckForOwner(ctx, 101, "Owner1", "EN", "DE")
-	if err != nil {
-		t.Fatalf("CreateDeckForOwner 101: %v", err)
-	}
-	d2, err := store.CreateDeckForOwner(ctx, 202, "Owner2", "DE", "RU")
-	if err != nil {
-		t.Fatalf("CreateDeckForOwner 202: %v", err)
-	}
+	d0 := mustCreateDeckQueryTest(t, store, ctx, "CLI Deck", "EN", "RU")
+	d1 := mustCreateDeckForOwnerQueryTest(t, store, ctx, 101, "Owner1", "EN", "DE")
+	d2 := mustCreateDeckForOwnerQueryTest(t, store, ctx, 202, "Owner2", "DE", "RU")
 
 	all, err := store.ListDecksAll(ctx)
 	if err != nil {
@@ -247,14 +253,19 @@ func TestListDecksAll(t *testing.T) {
 	if len(all) != 3 {
 		t.Fatalf("expected 3 decks, got %d", len(all))
 	}
-	if all[0].ID != d0.ID || all[0].TelegramUserID != 0 || all[0].Name != "CLI Deck" {
-		t.Fatalf("unexpected first deck: %#v", all[0])
-	}
+	assertDeckRow(t, all[0], d0.ID, 0, "CLI Deck")
 	if all[1].ID != d1.ID || all[1].TelegramUserID != 101 {
 		t.Fatalf("unexpected second deck: %#v", all[1])
 	}
 	if all[2].ID != d2.ID || all[2].TelegramUserID != 202 {
 		t.Fatalf("unexpected third deck: %#v", all[2])
+	}
+}
+
+func assertDeckRow(t *testing.T, row domain.Deck, id int64, telegramUserID int64, name string) {
+	t.Helper()
+	if row.ID != id || row.TelegramUserID != telegramUserID || row.Name != name {
+		t.Fatalf("unexpected deck: %#v", row)
 	}
 }
 
@@ -328,46 +339,47 @@ func TestActiveDeckForUser(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
 
-	d1, err := store.CreateDeckForOwner(ctx, 101, "Deck One", "EN", "RU")
-	if err != nil {
-		t.Fatalf("CreateDeckForOwner d1: %v", err)
-	}
-	d2, err := store.CreateDeckForOwner(ctx, 101, "Deck Two", "EN", "DE")
-	if err != nil {
-		t.Fatalf("CreateDeckForOwner d2: %v", err)
-	}
+	d1 := mustCreateDeckForOwnerQueryTest(t, store, ctx, 101, "Deck One", "EN", "RU")
+	d2 := mustCreateDeckForOwnerQueryTest(t, store, ctx, 101, "Deck Two", "EN", "DE")
 
-	if err := store.SetActiveDeckForUser(ctx, 101, d1.ID); err != nil {
-		t.Fatalf("SetActiveDeckForUser d1: %v", err)
-	}
-	got, err := store.GetActiveDeckForUser(ctx, 101)
-	if err != nil {
-		t.Fatalf("GetActiveDeckForUser d1: %v", err)
-	}
-	if got == nil || got.ID != d1.ID {
-		t.Fatalf("expected active deck %d, got %#v", d1.ID, got)
-	}
+	mustSetActiveDeckQueryTest(t, store, ctx, 101, d1.ID)
+	assertActiveDeckIs(t, store, ctx, 101, d1.ID)
 
-	if err := store.SetActiveDeckForUser(ctx, 101, d2.ID); err != nil {
-		t.Fatalf("SetActiveDeckForUser d2: %v", err)
-	}
-	got, err = store.GetActiveDeckForUser(ctx, 101)
-	if err != nil {
-		t.Fatalf("GetActiveDeckForUser d2: %v", err)
-	}
-	if got == nil || got.ID != d2.ID {
-		t.Fatalf("expected active deck %d, got %#v", d2.ID, got)
-	}
+	mustSetActiveDeckQueryTest(t, store, ctx, 101, d2.ID)
+	assertActiveDeckIs(t, store, ctx, 101, d2.ID)
 
 	if err := store.ClearActiveDeckForUser(ctx, 101); err != nil {
 		t.Fatalf("ClearActiveDeckForUser: %v", err)
 	}
-	got, err = store.GetActiveDeckForUser(ctx, 101)
+	assertActiveDeckNil(t, store, ctx, 101)
+}
+
+func mustSetActiveDeckQueryTest(t *testing.T, store *Store, ctx context.Context, userID, deckID int64) {
+	t.Helper()
+	if err := store.SetActiveDeckForUser(ctx, userID, deckID); err != nil {
+		t.Fatalf("SetActiveDeckForUser: %v", err)
+	}
+}
+
+func assertActiveDeckIs(t *testing.T, store *Store, ctx context.Context, userID, deckID int64) {
+	t.Helper()
+	got, err := store.GetActiveDeckForUser(ctx, userID)
 	if err != nil {
-		t.Fatalf("GetActiveDeckForUser cleared: %v", err)
+		t.Fatalf("GetActiveDeckForUser: %v", err)
+	}
+	if got == nil || got.ID != deckID {
+		t.Fatalf("expected active deck %d, got %#v", deckID, got)
+	}
+}
+
+func assertActiveDeckNil(t *testing.T, store *Store, ctx context.Context, userID int64) {
+	t.Helper()
+	got, err := store.GetActiveDeckForUser(ctx, userID)
+	if err != nil {
+		t.Fatalf("GetActiveDeckForUser: %v", err)
 	}
 	if got != nil {
-		t.Fatalf("expected nil active deck after clear, got %#v", got)
+		t.Fatalf("expected nil active deck, got %#v", got)
 	}
 }
 
@@ -377,18 +389,10 @@ func TestFindDeckByNameForOwner(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
 
-	if _, err := store.CreateDeckForOwner(ctx, 101, "English Basics", "EN", "RU"); err != nil {
-		t.Fatalf("CreateDeckForOwner #1: %v", err)
-	}
-	if _, err := store.CreateDeckForOwner(ctx, 101, "English Advanced", "EN", "DE"); err != nil {
-		t.Fatalf("CreateDeckForOwner #2: %v", err)
-	}
-	if _, err := store.CreateDeckForOwner(ctx, 101, "Basic Portuguese", "PT", "RU"); err != nil {
-		t.Fatalf("CreateDeckForOwner #3: %v", err)
-	}
-	if _, err := store.CreateDeckForOwner(ctx, 202, "English Basics", "EN", "RU"); err != nil {
-		t.Fatalf("CreateDeckForOwner foreign: %v", err)
-	}
+	mustCreateDeckForOwnerQueryTest(t, store, ctx, 101, "English Basics", "EN", "RU")
+	mustCreateDeckForOwnerQueryTest(t, store, ctx, 101, "English Advanced", "EN", "DE")
+	mustCreateDeckForOwnerQueryTest(t, store, ctx, 101, "Basic Portuguese", "PT", "RU")
+	mustCreateDeckForOwnerQueryTest(t, store, ctx, 202, "English Basics", "EN", "RU")
 
 	exact, err := store.FindDeckByExactNameForOwner(ctx, 101, " english basics ")
 	if err != nil {
@@ -406,16 +410,21 @@ func TestFindDeckByNameForOwner(t *testing.T) {
 		t.Fatalf("expected nil exact deck, got %#v", missing)
 	}
 
-	candidates, err := store.FindDeckCandidatesForOwner(ctx, 101, "english", 10)
+	assertDeckCandidatesForOwner(t, store, ctx, 101, "english", 10, 2)
+}
+
+func assertDeckCandidatesForOwner(t *testing.T, store *Store, ctx context.Context, ownerID int64, query string, limit, wantLen int) {
+	t.Helper()
+	candidates, err := store.FindDeckCandidatesForOwner(ctx, ownerID, query, limit)
 	if err != nil {
 		t.Fatalf("FindDeckCandidatesForOwner: %v", err)
 	}
-	if len(candidates) != 2 {
-		t.Fatalf("expected 2 candidates, got %#v", candidates)
+	if len(candidates) != wantLen {
+		t.Fatalf("expected %d candidates, got %#v", wantLen, candidates)
 	}
 	for _, d := range candidates {
-		if d.TelegramUserID != 101 {
-			t.Fatalf("expected owner 101 candidate, got %#v", d)
+		if d.TelegramUserID != ownerID {
+			t.Fatalf("expected owner %d candidate, got %#v", ownerID, d)
 		}
 	}
 }

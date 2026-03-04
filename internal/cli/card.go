@@ -148,6 +148,64 @@ func newCardCmd(ctx *commandContext) *cobra.Command {
 	return cardCmd
 }
 
+func readBatchInput(fromFile string, fromStdin bool) ([]byte, error) {
+	if (fromFile == "" && !fromStdin) || (fromFile != "" && fromStdin) {
+		return nil, fmt.Errorf("exactly one input source is required: --from-file or --stdin")
+	}
+	if fromFile != "" {
+		data, err := os.ReadFile(fromFile)
+		if err != nil {
+			return nil, fmt.Errorf("read --from-file: %w", err)
+		}
+		return data, nil
+	}
+	data, err := os.ReadFile("/dev/stdin")
+	if err != nil {
+		return nil, fmt.Errorf("read --stdin: %w", err)
+	}
+	return data, nil
+}
+
+func writeBatchReport(out io.Writer, report app.BatchAddReport) {
+	if out == nil {
+		return
+	}
+	for _, item := range report.Items {
+		reasonSuffix := ""
+		if strings.TrimSpace(item.Reason) != "" {
+			reasonSuffix = " (" + item.Reason + ")"
+		}
+		_, _ = fmt.Fprintf(out, "- %s => %s%s\n", item.FrontNormalized, item.Status, reasonSuffix)
+	}
+	_, _ = fmt.Fprintf(out, "Summary: total=%d created=%d skipped_duplicates=%d failed=%d\n",
+		report.Summary.Total,
+		report.Summary.Created,
+		report.Summary.SkippedDuplicates,
+		report.Summary.Failed,
+	)
+}
+
+func runCardAddBatchAI(ctx context.Context, store *sqlite.Store, fromFile string, fromStdin bool, dryRun bool, out io.Writer) error {
+	data, err := readBatchInput(fromFile, fromStdin)
+	if err != nil {
+		return err
+	}
+	generator, err := ai.NewGeneratorFromEnv()
+	if err != nil {
+		return err
+	}
+	service := app.NewService(store)
+	report, err := service.AddCardsBatchAIForActiveDeckForUser(ctx, 0, generator, strings.Split(string(data), "\n"), app.BatchModeCLI, dryRun)
+	if err != nil {
+		if errors.Is(err, app.ErrActiveDeckNotSet) {
+			return fmt.Errorf("active deck is not set; run 'deck use <name...>'")
+		}
+		return err
+	}
+	writeBatchReport(out, report)
+	return nil
+}
+
 func newCardAddBatchAICmd(ctx *commandContext) *cobra.Command {
 	var fromFile string
 	var fromStdin bool
@@ -157,51 +215,7 @@ func newCardAddBatchAICmd(ctx *commandContext) *cobra.Command {
 		Use:   "add-batch-ai",
 		Short: "Add multiple cards with AI-generated fields",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if (fromFile == "" && !fromStdin) || (fromFile != "" && fromStdin) {
-				return fmt.Errorf("exactly one input source is required: --from-file or --stdin")
-			}
-
-			var data []byte
-			var err error
-			if fromFile != "" {
-				data, err = os.ReadFile(fromFile)
-				if err != nil {
-					return fmt.Errorf("read --from-file: %w", err)
-				}
-			} else {
-				data, err = os.ReadFile("/dev/stdin")
-				if err != nil {
-					return fmt.Errorf("read --stdin: %w", err)
-				}
-			}
-
-			generator, err := ai.NewGeneratorFromEnv()
-			if err != nil {
-				return err
-			}
-			service := app.NewService(ctx.Store)
-			report, err := service.AddCardsBatchAIForActiveDeckForUser(context.Background(), 0, generator, strings.Split(string(data), "\n"), app.BatchModeCLI, dryRun)
-			if err != nil {
-				if errors.Is(err, app.ErrActiveDeckNotSet) {
-					return fmt.Errorf("active deck is not set; run 'deck use <name...>'")
-				}
-				return err
-			}
-
-			for _, item := range report.Items {
-				reasonSuffix := ""
-				if strings.TrimSpace(item.Reason) != "" {
-					reasonSuffix = " (" + item.Reason + ")"
-				}
-				fmt.Printf("- %s => %s%s\n", item.FrontNormalized, item.Status, reasonSuffix)
-			}
-			fmt.Printf("Summary: total=%d created=%d skipped_duplicates=%d failed=%d\n",
-				report.Summary.Total,
-				report.Summary.Created,
-				report.Summary.SkippedDuplicates,
-				report.Summary.Failed,
-			)
-			return nil
+			return runCardAddBatchAI(cmd.Context(), ctx.Store, fromFile, fromStdin, dryRun, cmd.OutOrStdout())
 		},
 	}
 

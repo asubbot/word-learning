@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"word-learning-cli/internal/ai"
+	"word-learning-cli/internal/domain"
 )
 
 type fakeGenerator struct {
@@ -235,9 +236,7 @@ func TestAddCardsBatchAIForUser_RemovedDuplicateRegeneratedAndReactivated(t *tes
 	if err != nil {
 		t.Fatalf("AddCardsBatchAIForUser: %v", err)
 	}
-	if report.Summary.Created != 1 || report.Summary.SkippedDuplicates != 0 || report.Summary.Failed != 0 {
-		t.Fatalf("unexpected summary: %#v", report.Summary)
-	}
+	assertBatchSummary(t, report.Summary, 1, 0, 0)
 
 	allCards, err := svc.ListCards(ctx, deckID, "")
 	if err != nil {
@@ -246,11 +245,23 @@ func TestAddCardsBatchAIForUser_RemovedDuplicateRegeneratedAndReactivated(t *tes
 	if len(allCards) != 1 {
 		t.Fatalf("expected exactly one card after regeneration, got %d", len(allCards))
 	}
-	if allCards[0].Status != "active" {
-		t.Fatalf("expected card status active, got %q", allCards[0].Status)
+	assertRegeneratedCardFields(t, allCards[0], "new-back", "/new/", "new example")
+}
+
+func assertBatchSummary(t *testing.T, s BatchAddSummary, created, skipped, failed int) {
+	t.Helper()
+	if s.Created != created || s.SkippedDuplicates != skipped || s.Failed != failed {
+		t.Fatalf("unexpected summary: created=%d skipped=%d failed=%d (want %d %d %d)", s.Created, s.SkippedDuplicates, s.Failed, created, skipped, failed)
 	}
-	if allCards[0].Back != "new-back" || allCards[0].Pronunciation != "/new/" || allCards[0].Example != "new example" {
-		t.Fatalf("expected regenerated fields to be applied, got %#v", allCards[0])
+}
+
+func assertRegeneratedCardFields(t *testing.T, c domain.Card, back, pronunciation, example string) {
+	t.Helper()
+	if c.Status != "active" {
+		t.Fatalf("expected card status active, got %q", c.Status)
+	}
+	if c.Back != back || c.Pronunciation != pronunciation || c.Example != example {
+		t.Fatalf("expected regenerated fields back=%q pron=%q ex=%q, got %#v", back, pronunciation, example, c)
 	}
 }
 
