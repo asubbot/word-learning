@@ -1,4 +1,4 @@
-coverage.out
+*.out
 coverage.html
 *.db
 .env
