@@ -104,6 +104,7 @@ docker compose up -d --build
 ```
 
 - DB in container: `/data/wordlearn.db` (host dir `./data` is mounted).
+- Backup runs at container start; backup files appear in `./data/backups` on the host.
 - To use the same DB from the host CLI: `WORDLEARN_DB_PATH=./data/wordlearn.db go run ./cmd/wordcli ...`
 
 ---

@@ -2,3 +2,5 @@
 coverage.html
 *.db
 .env
+backups/
+data/backups/

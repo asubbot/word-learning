@@ -9,6 +9,8 @@ services:
       # DB path inside container; host binds ./data to /data
       WORDLEARN_DB_PATH: /data/wordlearn.db
       OPENAI_PROMPTS_DIR: /prompts
+      WORDLEARN_BACKUP_DIR: /backups
     volumes:
       - ./data:/data
+      - ./data/backups:/backups
       - ./prompts:/prompts:ro
