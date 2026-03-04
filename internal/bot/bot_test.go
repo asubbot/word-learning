@@ -275,8 +275,8 @@ func TestBotSwitchDeckButtonShowsInlineUseButtons(t *testing.T) {
 		t.Fatalf("CreateDeckForUser phrasal: %v", err)
 	}
 
-	if err := h.handleUpdate(ctx, tgbotapi.Update{Message: plainMessage(100, 42, switchDeckButtonText)}); err != nil {
-		t.Fatalf("switch deck button: %v", err)
+	if err := h.handleUpdate(ctx, tgbotapi.Update{Message: plainMessage(100, 42, startLearningButtonText)}); err != nil {
+		t.Fatalf("start learning button: %v", err)
 	}
 	if len(api.sentConfigs) == 0 {
 		t.Fatal("expected menu message")
@@ -437,8 +437,8 @@ func TestBotSwitchDeckButtonNoDecks(t *testing.T) {
 
 	h, api := newTestHandler(t)
 	ctx := context.Background()
-	if err := h.handleUpdate(ctx, tgbotapi.Update{Message: plainMessage(100, 42, switchDeckButtonText)}); err != nil {
-		t.Fatalf("switch deck button: %v", err)
+	if err := h.handleUpdate(ctx, tgbotapi.Update{Message: plainMessage(100, 42, startLearningButtonText)}); err != nil {
+		t.Fatalf("start learning button: %v", err)
 	}
 	if len(api.sentTexts) == 0 || api.sentTexts[len(api.sentTexts)-1] != "No decks found." {
 		t.Fatalf("expected no decks found text, got %#v", api.sentTexts)
@@ -667,11 +667,11 @@ func TestBotSwitchDeckButtonCaseInsensitiveAndTrimmed(t *testing.T) {
 		t.Fatalf("CreateDeckForUser basics: %v", err)
 	}
 
-	if err := h.handleUpdate(ctx, tgbotapi.Update{Message: plainMessage(100, 42, "   sWiTcH DeCk   ")}); err != nil {
-		t.Fatalf("switch deck mixed-case text: %v", err)
+	if err := h.handleUpdate(ctx, tgbotapi.Update{Message: plainMessage(100, 42, "   StArT lEaRnInG   ")}); err != nil {
+		t.Fatalf("start learning mixed-case text: %v", err)
 	}
 	if len(api.sentConfigs) == 0 {
-		t.Fatal("expected switch deck menu message")
+		t.Fatal("expected start learning menu message")
 	}
 	last := api.sentConfigs[len(api.sentConfigs)-1]
 	if last.Text != "Choose deck:" {

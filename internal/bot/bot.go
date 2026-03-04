@@ -57,8 +57,8 @@ type callbackDeduper struct {
 }
 
 const (
-	switchDeckButtonText = "Switch deck"
-	addBatchAIButtonText = "Add batch AI"
+	startLearningButtonText = "Start learning"
+	addBatchAIButtonText    = "Add batch AI"
 )
 
 func newCallbackDeduper() *callbackDeduper {
@@ -233,7 +233,7 @@ func (h *handler) handleUseDeckCallback(ctx context.Context, cb *tgbotapi.Callba
 func (h *handler) handleTextMessage(ctx context.Context, msg *tgbotapi.Message) error {
 	text := strings.TrimSpace(msg.Text)
 	switch {
-	case strings.EqualFold(text, switchDeckButtonText):
+	case strings.EqualFold(text, startLearningButtonText):
 		return h.sendSwitchDeckMenu(ctx, msg.Chat.ID, msg.From.ID)
 	case strings.EqualFold(text, addBatchAIButtonText):
 		return h.sendBatchAIDeckMenu(ctx, msg.Chat.ID, msg.From.ID)
@@ -734,7 +734,7 @@ func deckSwitchKeyboard(decks []domain.Deck) tgbotapi.InlineKeyboardMarkup {
 func mainReplyKeyboard() tgbotapi.ReplyKeyboardMarkup {
 	return tgbotapi.NewReplyKeyboard(
 		tgbotapi.NewKeyboardButtonRow(
-			tgbotapi.NewKeyboardButton(switchDeckButtonText),
+			tgbotapi.NewKeyboardButton(startLearningButtonText),
 			tgbotapi.NewKeyboardButton(addBatchAIButtonText),
 		),
 	)

@@ -49,7 +49,7 @@ go run ./cmd/wordbot
 
 | Button | What happens |
 |--------|----------------|
-| **Switch deck** | List of your decks (inline); tap one → it becomes active and the next card is shown. |
+| **Start learning** | List of your decks (inline); tap one → it becomes active and the next card is shown. |
 | **Add batch AI** | Choose deck (inline); then send one message with one word, phrase, or context sentence per line (see **Phrase and context mode** below). Bot fills back/pronunciation/example via AI. |
 
 **Slash commands**
