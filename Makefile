@@ -1,4 +1,4 @@
-.PHONY: help fmt test vet lint coverage coverage-html check
+.PHONY: help fmt test vet lint coverage coverage-html check check-readme
 
 help:
 	@echo "Available commands:"
@@ -8,7 +8,8 @@ help:
 	@echo "  make lint   - Run golangci-lint (if installed; includes complexity)"
 	@echo "  make coverage     - Print coverage summary"
 	@echo "  make coverage-html - Build HTML coverage report"
-	@echo "  make check  - Run fmt + vet + lint + coverage"
+	@echo "  make check-readme - Run README scenario steps (Scenario 1 CLI)"
+	@echo "  make check  - Run fmt + vet + lint + coverage + check-readme"
 
 fmt:
 	go fmt ./...
@@ -36,4 +37,7 @@ coverage-html:
 	go tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report generated: coverage.html"
 
-check: fmt vet lint coverage
+check-readme:
+	@./scripts/check-readme.sh --quiet
+
+check: fmt vet lint coverage check-readme
