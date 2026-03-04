@@ -126,6 +126,8 @@ go run ./cmd/wordcli card dont-remember --id 1
 
 ## Database Usage
 
+Схема БД задаётся и применяется из `internal/storage/sqlite/store.go` при старте (InitSchema). Таблицы: `decks` (колоды, владелец, языковая пара), `active_decks` (текущая колода на пользователя), `entries` (уникальные пары front/back по языковой паре), `cards` (карточки в колоде, статус, интервалы повторений).
+
 DB path is taken from:
 1. `WORDLEARN_DB_PATH` environment variable
 2. if it is not set, process exits with an error
@@ -480,6 +482,5 @@ From another Telegram account:
 - `internal/cli` - Cobra commands and output formatting.
 - `internal/bot` - Telegram routing, commands, and callback handling.
 - `internal/app` - business logic and validation.
-- `internal/storage/sqlite` - SQLite storage and queries.
+- `internal/storage/sqlite` - SQLite storage and queries (схема БД и InitSchema).
 - `internal/domain` - domain models.
-- `migrations` - SQL schema/migrations.
