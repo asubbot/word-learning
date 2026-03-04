@@ -411,3 +411,114 @@ func TestOpenAIGeneratorTimeoutConfig(t *testing.T) {
 		t.Fatalf("unexpected timeout: %v", gen.client.Timeout)
 	}
 }
+
+func TestIsRetryable_ProviderErrorRetryableTrue(t *testing.T) {
+	err := &ProviderError{Op: "test", Retryable: true, Err: errors.New("inner")}
+	if !isRetryable(err) {
+		t.Error("expected true for ProviderError with Retryable true")
+	}
+}
+
+func TestIsRetryable_ProviderErrorRetryableFalse(t *testing.T) {
+	err := &ProviderError{Op: "test", Retryable: false, Err: errors.New("inner")}
+	if isRetryable(err) {
+		t.Error("expected false for ProviderError with Retryable false")
+	}
+}
+
+func TestIsRetryable_MessageContainsRetryable(t *testing.T) {
+	err := errors.New("something retryable happened")
+	if !isRetryable(err) {
+		t.Error("expected true when error message contains \"retryable\"")
+	}
+}
+
+func TestIsRetryable_PlainErrorNotRetryable(t *testing.T) {
+	err := errors.New("permanent failure")
+	if isRetryable(err) {
+		t.Error("expected false for plain error without \"retryable\"")
+	}
+}
+
+func TestIsRetryable_Nil(t *testing.T) {
+	if isRetryable(nil) {
+		t.Error("expected false for nil error")
+	}
+}
+
+// TestGenerateCard_RetryableExhausted verifies that retryable errors cause retries
+// up to MaxRetries and then return the last error.
+func TestGenerateCard_RetryableExhausted(t *testing.T) {
+	t.Parallel()
+	promptsDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(promptsDir, "prompt_en-ru.txt"), []byte("prompt"), 0o644); err != nil {
+		t.Fatalf("write prompt file: %v", err)
+	}
+
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"error":"rate limit"}`))
+	}))
+	defer server.Close()
+
+	gen := NewOpenAIGenerator(Config{
+		APIKey:     "k",
+		BaseURL:    server.URL,
+		Model:      "m",
+		TimeoutSec: 2,
+		MaxRetries: 2,
+		PromptsDir: promptsDir,
+	})
+	_, err := gen.GenerateCard(context.Background(), GenerateCardRequest{
+		LanguageFrom: "EN",
+		LanguageTo:   "RU",
+		Front:        "word",
+	})
+	if err == nil {
+		t.Fatal("expected error after exhausting retries")
+	}
+	// MaxRetries=2 -> 3 attempts (0, 1, 2)
+	if attempts != 3 {
+		t.Fatalf("expected 3 attempts (retries exhausted), got %d", attempts)
+	}
+}
+
+// TestGenerateCard_NonRetryableNoRetry verifies that a non-retryable error
+// returns immediately without retrying (single attempt).
+func TestGenerateCard_NonRetryableNoRetry(t *testing.T) {
+	t.Parallel()
+	promptsDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(promptsDir, "prompt_en-ru.txt"), []byte("prompt"), 0o644); err != nil {
+		t.Fatalf("write prompt file: %v", err)
+	}
+
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"bad request"}`))
+	}))
+	defer server.Close()
+
+	gen := NewOpenAIGenerator(Config{
+		APIKey:     "k",
+		BaseURL:    server.URL,
+		Model:      "m",
+		TimeoutSec: 2,
+		MaxRetries: 2,
+		PromptsDir: promptsDir,
+	})
+	_, err := gen.GenerateCard(context.Background(), GenerateCardRequest{
+		LanguageFrom: "EN",
+		LanguageTo:   "RU",
+		Front:        "word",
+	})
+	if err == nil {
+		t.Fatal("expected error for 400 response")
+	}
+	if attempts != 1 {
+		t.Fatalf("expected 1 attempt (no retry for non-retryable), got %d", attempts)
+	}
+}

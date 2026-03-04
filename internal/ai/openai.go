@@ -28,6 +28,43 @@ type OpenAIGenerator struct {
 	client *http.Client
 }
 
+func parseEnvIntPositive(key, raw string, defaultVal int) (int, error) {
+	if raw == "" {
+		return defaultVal, nil
+	}
+	parsed, err := strconv.Atoi(raw)
+	if err != nil || parsed <= 0 {
+		return 0, fmt.Errorf("%s must be a positive integer", key)
+	}
+	return parsed, nil
+}
+
+func parseEnvIntNonNegative(key, raw string, defaultVal int) (int, error) {
+	if raw == "" {
+		return defaultVal, nil
+	}
+	parsed, err := strconv.Atoi(raw)
+	if err != nil || parsed < 0 {
+		return 0, fmt.Errorf("%s must be a non-negative integer", key)
+	}
+	return parsed, nil
+}
+
+func loadPromptsDirFromEnv() (string, error) {
+	promptsDir := strings.TrimSpace(os.Getenv("OPENAI_PROMPTS_DIR"))
+	if promptsDir == "" {
+		promptsDir = "./prompts"
+	}
+	info, err := os.Stat(promptsDir)
+	if err != nil {
+		return "", fmt.Errorf("OPENAI_PROMPTS_DIR invalid: %w", err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("OPENAI_PROMPTS_DIR must point to a directory")
+	}
+	return promptsDir, nil
+}
+
 func LoadConfigFromEnv() (Config, error) {
 	apiKey := strings.TrimSpace(os.Getenv("OPENAI_API_KEY"))
 	if apiKey == "" {
@@ -41,32 +78,17 @@ func LoadConfigFromEnv() (Config, error) {
 	if model == "" {
 		model = "gpt-4o-mini"
 	}
-	timeoutSec := 30
-	if raw := strings.TrimSpace(os.Getenv("OPENAI_TIMEOUT_SEC")); raw != "" {
-		parsed, err := strconv.Atoi(raw)
-		if err != nil || parsed <= 0 {
-			return Config{}, fmt.Errorf("OPENAI_TIMEOUT_SEC must be a positive integer")
-		}
-		timeoutSec = parsed
-	}
-	maxRetries := 2
-	if raw := strings.TrimSpace(os.Getenv("OPENAI_MAX_RETRIES")); raw != "" {
-		parsed, err := strconv.Atoi(raw)
-		if err != nil || parsed < 0 {
-			return Config{}, fmt.Errorf("OPENAI_MAX_RETRIES must be a non-negative integer")
-		}
-		maxRetries = parsed
-	}
-	promptsDir := strings.TrimSpace(os.Getenv("OPENAI_PROMPTS_DIR"))
-	if promptsDir == "" {
-		promptsDir = "./prompts"
-	}
-	info, err := os.Stat(promptsDir)
+	timeoutSec, err := parseEnvIntPositive("OPENAI_TIMEOUT_SEC", strings.TrimSpace(os.Getenv("OPENAI_TIMEOUT_SEC")), 30)
 	if err != nil {
-		return Config{}, fmt.Errorf("OPENAI_PROMPTS_DIR invalid: %w", err)
+		return Config{}, err
 	}
-	if !info.IsDir() {
-		return Config{}, fmt.Errorf("OPENAI_PROMPTS_DIR must point to a directory")
+	maxRetries, err := parseEnvIntNonNegative("OPENAI_MAX_RETRIES", strings.TrimSpace(os.Getenv("OPENAI_MAX_RETRIES")), 2)
+	if err != nil {
+		return Config{}, err
+	}
+	promptsDir, err := loadPromptsDirFromEnv()
+	if err != nil {
+		return Config{}, err
 	}
 	return Config{
 		APIKey:     apiKey,
@@ -120,6 +142,19 @@ type generatedPayload struct {
 	Conjugation   string `json:"conjugation"`
 }
 
+// isRetryable reports whether the error should be retried: true if err is a
+// ProviderError with Retryable true, or if the error message contains "retryable".
+func isRetryable(err error) bool {
+	if err == nil {
+		return false
+	}
+	var pe *ProviderError
+	if asProviderError(err, &pe) && pe.Retryable {
+		return true
+	}
+	return strings.Contains(err.Error(), "retryable")
+}
+
 func (g *OpenAIGenerator) GenerateCard(ctx context.Context, req GenerateCardRequest) (GeneratedCard, error) {
 	var lastErr error
 	for attempt := 0; attempt <= g.cfg.MaxRetries; attempt++ {
@@ -128,8 +163,7 @@ func (g *OpenAIGenerator) GenerateCard(ctx context.Context, req GenerateCardRequ
 			return card, nil
 		}
 		lastErr = err
-		var providerErr *ProviderError
-		if attempt == g.cfg.MaxRetries || !strings.Contains(err.Error(), "retryable") && (!asProviderError(err, &providerErr) || !providerErr.Retryable) {
+		if attempt == g.cfg.MaxRetries || !isRetryable(err) {
 			break
 		}
 		time.Sleep(time.Duration(attempt+1) * 200 * time.Millisecond)
