@@ -8,9 +8,9 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"word-learning-cli/internal/app"
-	"word-learning-cli/internal/domain"
-	"word-learning-cli/internal/storage/sqlite"
+	"word-learning/internal/app"
+	"word-learning/internal/domain"
+	"word-learning/internal/storage/sqlite"
 )
 
 // runDeckCreate creates a deck and writes a line to out. Returns the created deck or error.

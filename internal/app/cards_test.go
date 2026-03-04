@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"word-learning-cli/internal/domain"
-	"word-learning-cli/internal/storage/sqlite"
+	"word-learning/internal/domain"
+	"word-learning/internal/storage/sqlite"
 )
 
 func newTestService(t *testing.T) (*Service, *sqlite.Store) {

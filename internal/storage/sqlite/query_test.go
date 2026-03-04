@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"word-learning-cli/internal/domain"
+	"word-learning/internal/domain"
 )
 
 func newTestStore(t *testing.T) *Store {

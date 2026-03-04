@@ -9,10 +9,10 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"word-learning-cli/internal/ai"
-	"word-learning-cli/internal/app"
-	"word-learning-cli/internal/domain"
-	"word-learning-cli/internal/storage/sqlite"
+	"word-learning/internal/ai"
+	"word-learning/internal/app"
+	"word-learning/internal/domain"
+	"word-learning/internal/storage/sqlite"
 )
 
 // runCardAdd adds a card to the active deck for user 0. Writes one line to out.

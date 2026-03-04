@@ -7,7 +7,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"word-learning-cli/internal/bot"
+	"word-learning/internal/bot"
 )
 
 func main() {

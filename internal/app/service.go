@@ -6,8 +6,8 @@ import (
 	"regexp"
 	"strings"
 
-	"word-learning-cli/internal/domain"
-	"word-learning-cli/internal/storage/sqlite"
+	"word-learning/internal/domain"
+	"word-learning/internal/storage/sqlite"
 )
 
 var languageCodePattern = regexp.MustCompile(`^[A-Za-z]{2,8}$`)

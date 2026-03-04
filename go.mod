@@ -1,4 +1,4 @@
-module word-learning-cli
+module word-learning
 
 go 1.25.5
 

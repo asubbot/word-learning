@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"word-learning-cli/internal/domain"
-	"word-learning-cli/internal/storage/sqlite"
+	"word-learning/internal/domain"
+	"word-learning/internal/storage/sqlite"
 )
 
 var ErrCardNotFound = errors.New("card not found")

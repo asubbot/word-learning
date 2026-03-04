@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"word-learning-cli/internal/ai"
-	"word-learning-cli/internal/domain"
+	"word-learning/internal/ai"
+	"word-learning/internal/domain"
 )
 
 type fakeGenerator struct {

@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"word-learning-cli/internal/storage/sqlite"
+	"word-learning/internal/storage/sqlite"
 )
 
 const dbPathEnvVar = "WORDLEARN_DB_PATH"

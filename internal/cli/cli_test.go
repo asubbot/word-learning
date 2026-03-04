@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"word-learning-cli/internal/domain"
-	"word-learning-cli/internal/storage/sqlite"
+	"word-learning/internal/domain"
+	"word-learning/internal/storage/sqlite"
 )
 
 func newTestStore(t *testing.T) *sqlite.Store {

@@ -1,10 +1,8 @@
-# word-learning-cli
+# word-learning
 
 CLI and Telegram bot for learning words with flashcards. One SQLite DB for both.
 
 **Before anything:** Go 1.22+. Set `WORDLEARN_DB_PATH` to a file path (e.g. `./data/wordlearn.db`). Re-export in each new terminal or add to your shell profile.
-
-**Pick a path:** CLI only (Scenario 1) · Bot (2) · Batch AI via CLI (3) · Bot in Docker (4)
 
 ---
 

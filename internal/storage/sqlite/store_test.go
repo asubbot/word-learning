@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"word-learning-cli/internal/domain"
+	"word-learning/internal/domain"
 )
 
 func TestNextCardForDeck_RespectsDueAndRemoved(t *testing.T) {

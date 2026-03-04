@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"word-learning-cli/internal/domain"
+	"word-learning/internal/domain"
 )
 
 type CardCreateParams struct {

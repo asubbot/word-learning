@@ -3,7 +3,7 @@ package cli
 import (
 	"fmt"
 	"io"
-	"word-learning-cli/internal/domain"
+	"word-learning/internal/domain"
 )
 
 func printDecksAllTo(out io.Writer, decks []domain.Deck) {

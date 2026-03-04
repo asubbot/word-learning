@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"word-learning-cli/internal/cli"
+	"word-learning/internal/cli"
 )
 
 func main() {

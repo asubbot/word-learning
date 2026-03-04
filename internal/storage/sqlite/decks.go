@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"word-learning-cli/internal/domain"
+	"word-learning/internal/domain"
 )
 
 func (s *Store) CreateDeck(ctx context.Context, name, languageFrom, languageTo string) (domain.Deck, error) {

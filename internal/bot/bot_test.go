@@ -9,9 +9,9 @@ import (
 	"testing"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
-	"word-learning-cli/internal/ai"
-	"word-learning-cli/internal/app"
-	"word-learning-cli/internal/storage/sqlite"
+	"word-learning/internal/ai"
+	"word-learning/internal/app"
+	"word-learning/internal/storage/sqlite"
 )
 
 type fakeAPI struct {

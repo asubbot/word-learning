@@ -1,7 +1,7 @@
 services:
   wordbot:
     build: .
-    image: word-learning-cli/wordbot:latest
+    image: word-learning/wordbot:latest
     container_name: wordbot
     restart: unless-stopped
     env_file: .env
