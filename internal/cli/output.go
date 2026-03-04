@@ -2,19 +2,22 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"word-learning-cli/internal/domain"
 )
 
-func printDecksAll(decks []domain.Deck) {
+func printDecksAllTo(out io.Writer, decks []domain.Deck) {
+	if out == nil {
+		out = io.Discard
+	}
 	if len(decks) == 0 {
-		fmt.Println("No decks yet.")
+		_, _ = fmt.Fprintln(out, "No decks yet.")
 		return
 	}
-
 	const ownerWidth = 22 // fits "Telegram (188037393)"
-	fmt.Printf("%-4s%-*s%s\t%s\t%s\n", "ID", ownerWidth, "OWNER", "FROM", "TO", "NAME")
+	_, _ = fmt.Fprintf(out, "%-4s%-*s%s\t%s\t%s\n", "ID", ownerWidth, "OWNER", "FROM", "TO", "NAME")
 	for _, deck := range decks {
-		fmt.Printf("%-4d%-*s%s\t%s\t%s\n", deck.ID, ownerWidth, formatDeckOwner(deck.TelegramUserID), deck.LanguageFrom, deck.LanguageTo, deck.Name)
+		_, _ = fmt.Fprintf(out, "%-4d%-*s%s\t%s\t%s\n", deck.ID, ownerWidth, formatDeckOwner(deck.TelegramUserID), deck.LanguageFrom, deck.LanguageTo, deck.Name)
 	}
 }
 
@@ -25,30 +28,35 @@ func formatDeckOwner(telegramUserID int64) string {
 	return fmt.Sprintf("Telegram (%d)", telegramUserID)
 }
 
-func printCards(cards []domain.Card) {
+func printCardsTo(out io.Writer, cards []domain.Card) {
+	if out == nil {
+		out = io.Discard
+	}
 	if len(cards) == 0 {
-		fmt.Println("No cards found.")
+		_, _ = fmt.Fprintln(out, "No cards found.")
 		return
 	}
-
-	fmt.Println("ID\tDECK\tSTATUS\tFRONT\tBACK\tPRONUNCIATION")
+	_, _ = fmt.Fprintln(out, "ID\tDECK\tSTATUS\tFRONT\tBACK\tPRONUNCIATION")
 	for _, card := range cards {
-		fmt.Printf("%d\t%d\t%s\t%s\t%s\t%s\n", card.ID, card.DeckID, card.Status, card.Front, card.Back, card.Pronunciation)
+		_, _ = fmt.Fprintf(out, "%d\t%d\t%s\t%s\t%s\t%s\n", card.ID, card.DeckID, card.Status, card.Front, card.Back, card.Pronunciation)
 	}
 }
 
-func printCardDetails(card domain.Card) {
-	fmt.Printf("Card ID: %d\n", card.ID)
-	fmt.Printf("Front: %s\n", card.Front)
-	fmt.Printf("Back: %s\n", card.Back)
+func printCardDetailsTo(out io.Writer, card domain.Card) {
+	if out == nil {
+		out = io.Discard
+	}
+	_, _ = fmt.Fprintf(out, "Card ID: %d\n", card.ID)
+	_, _ = fmt.Fprintf(out, "Front: %s\n", card.Front)
+	_, _ = fmt.Fprintf(out, "Back: %s\n", card.Back)
 	if card.Pronunciation != "" {
-		fmt.Printf("Pronunciation: %s\n", card.Pronunciation)
+		_, _ = fmt.Fprintf(out, "Pronunciation: %s\n", card.Pronunciation)
 	}
 	if card.Conjugation != "" {
-		fmt.Printf("Conjugation: %s\n", card.Conjugation)
+		_, _ = fmt.Fprintf(out, "Conjugation: %s\n", card.Conjugation)
 	}
 	if card.Example != "" {
-		fmt.Printf("Example: %s\n", card.Example)
+		_, _ = fmt.Fprintf(out, "Example: %s\n", card.Example)
 	}
-	fmt.Printf("Status: %s\n", card.Status)
+	_, _ = fmt.Fprintf(out, "Status: %s\n", card.Status)
 }

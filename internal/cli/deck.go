@@ -4,11 +4,79 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/spf13/cobra"
 	"word-learning-cli/internal/app"
+	"word-learning-cli/internal/domain"
+	"word-learning-cli/internal/storage/sqlite"
 )
+
+// runDeckCreate creates a deck and writes a line to out. Returns the created deck or error.
+func runDeckCreate(ctx context.Context, store *sqlite.Store, languageFrom, languageTo, name string, out io.Writer) (domain.Deck, error) {
+	service := app.NewService(store)
+	deck, err := service.CreateDeck(ctx, name, languageFrom, languageTo)
+	if err != nil {
+		return domain.Deck{}, err
+	}
+	if out != nil {
+		_, _ = fmt.Fprintf(out, "Deck created: id=%d name=%q pair=%s->%s\n", deck.ID, deck.Name, deck.LanguageFrom, deck.LanguageTo)
+	}
+	return deck, nil
+}
+
+// runDeckList lists all decks and writes to out.
+func runDeckList(ctx context.Context, store *sqlite.Store, out io.Writer) ([]domain.Deck, error) {
+	service := app.NewService(store)
+	decks, err := service.ListDecksAll(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if out != nil {
+		printDecksAllTo(out, decks)
+	}
+	return decks, nil
+}
+
+// runDeckUse sets the active deck by name for user 0. Returns the deck or error.
+func runDeckUse(ctx context.Context, store *sqlite.Store, name string, out io.Writer) (*domain.Deck, error) {
+	service := app.NewService(store)
+	result, err := service.DeckUseForUser(ctx, 0, name)
+	if err != nil {
+		if errors.Is(err, app.ErrDeckNameAmbiguous) && out != nil {
+			_, _ = fmt.Fprintln(out, "Deck name is ambiguous. Candidates:")
+			for _, d := range result.Candidates {
+				_, _ = fmt.Fprintf(out, "- %s (%s->%s)\n", d.Name, d.LanguageFrom, d.LanguageTo)
+			}
+			return nil, fmt.Errorf("please retry with exact deck name")
+		}
+		return nil, err
+	}
+	if result.Deck == nil {
+		return nil, fmt.Errorf("failed to set active deck")
+	}
+	if out != nil {
+		_, _ = fmt.Fprintf(out, "Active deck: %s (%s->%s)\n", result.Deck.Name, result.Deck.LanguageFrom, result.Deck.LanguageTo)
+	}
+	return result.Deck, nil
+}
+
+// runDeckCurrent returns the current active deck for user 0.
+func runDeckCurrent(ctx context.Context, store *sqlite.Store, out io.Writer) (*domain.Deck, error) {
+	service := app.NewService(store)
+	deck, err := service.DeckCurrentForUser(ctx, 0)
+	if err != nil {
+		return nil, err
+	}
+	if deck == nil {
+		return nil, fmt.Errorf("active deck is not set; run 'deck use <name...>'")
+	}
+	if out != nil {
+		_, _ = fmt.Fprintf(out, "Active deck: %s (%s->%s)\n", deck.Name, deck.LanguageFrom, deck.LanguageTo)
+	}
+	return deck, nil
+}
 
 func newDeckCmd(ctx *commandContext) *cobra.Command {
 	deckCmd := &cobra.Command{
@@ -33,14 +101,8 @@ func newDeckCreateCmd(ctx *commandContext) *cobra.Command {
 			languageFrom := args[0]
 			languageTo := args[1]
 			name := strings.Join(args[2:], " ")
-
-			service := app.NewService(ctx.Store)
-			deck, err := service.CreateDeck(context.Background(), name, languageFrom, languageTo)
-			if err != nil {
-				return err
-			}
-			fmt.Printf("Deck created: id=%d name=%q pair=%s->%s\n", deck.ID, deck.Name, deck.LanguageFrom, deck.LanguageTo)
-			return nil
+			_, err := runDeckCreate(cmd.Context(), ctx.Store, languageFrom, languageTo, name, cmd.OutOrStdout())
+			return err
 		},
 	}
 
@@ -52,13 +114,8 @@ func newDeckListCmd(ctx *commandContext) *cobra.Command {
 		Use:   "list",
 		Short: "List all decks (CLI and bot-created)",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			service := app.NewService(ctx.Store)
-			decks, err := service.ListDecksAll(context.Background())
-			if err != nil {
-				return err
-			}
-			printDecksAll(decks)
-			return nil
+			_, err := runDeckList(cmd.Context(), ctx.Store, cmd.OutOrStdout())
+			return err
 		},
 	}
 }
@@ -69,24 +126,9 @@ func newDeckUseCmd(ctx *commandContext) *cobra.Command {
 		Short: "Set active deck by exact name",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			service := app.NewService(ctx.Store)
 			name := strings.Join(args, " ")
-			result, err := service.DeckUseForUser(context.Background(), 0, name)
-			if err != nil {
-				if errors.Is(err, app.ErrDeckNameAmbiguous) {
-					fmt.Println("Deck name is ambiguous. Candidates:")
-					for _, d := range result.Candidates {
-						fmt.Printf("- %s (%s->%s)\n", d.Name, d.LanguageFrom, d.LanguageTo)
-					}
-					return fmt.Errorf("please retry with exact deck name")
-				}
-				return err
-			}
-			if result.Deck == nil {
-				return fmt.Errorf("failed to set active deck")
-			}
-			fmt.Printf("Active deck: %s (%s->%s)\n", result.Deck.Name, result.Deck.LanguageFrom, result.Deck.LanguageTo)
-			return nil
+			_, err := runDeckUse(cmd.Context(), ctx.Store, name, cmd.OutOrStdout())
+			return err
 		},
 	}
 }
@@ -96,16 +138,8 @@ func newDeckCurrentCmd(ctx *commandContext) *cobra.Command {
 		Use:   "current",
 		Short: "Show active deck",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			service := app.NewService(ctx.Store)
-			deck, err := service.DeckCurrentForUser(context.Background(), 0)
-			if err != nil {
-				return err
-			}
-			if deck == nil {
-				return fmt.Errorf("active deck is not set; run 'deck use <name...>'")
-			}
-			fmt.Printf("Active deck: %s (%s->%s)\n", deck.Name, deck.LanguageFrom, deck.LanguageTo)
-			return nil
+			_, err := runDeckCurrent(cmd.Context(), ctx.Store, cmd.OutOrStdout())
+			return err
 		},
 	}
 }

@@ -132,6 +132,47 @@ func TestAddCardsBatchAIForUser_AllSuccess(t *testing.T) {
 	}
 }
 
+func TestAddCardsBatchAI(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+	deckID := mustCreateDeck(t, svc)
+	const wantFront, wantBack = "word", "translation"
+
+	generator := fakeGenerator{
+		generate: func(req ai.GenerateCardRequest) (ai.GeneratedCard, error) {
+			return ai.GeneratedCard{
+				Front: req.Front,
+				Back:  wantBack,
+			}, nil
+		},
+	}
+
+	report, err := svc.AddCardsBatchAI(ctx, generator, BatchAddAIParams{
+		DeckID: deckID,
+		Lines:  []string{"word"},
+		Mode:   BatchModeCLI,
+		DryRun: false,
+	})
+	if err != nil {
+		t.Fatalf("AddCardsBatchAI: %v", err)
+	}
+	if report.Summary.Created < 1 {
+		t.Fatalf("expected Summary.Created >= 1, got %d", report.Summary.Created)
+	}
+	cards, err := svc.ListCards(ctx, deckID, "active")
+	if err != nil {
+		t.Fatalf("ListCards: %v", err)
+	}
+	if len(cards) != 1 {
+		t.Fatalf("expected 1 card in store, got %d", len(cards))
+	}
+	if cards[0].Front != wantFront || cards[0].Back != wantBack {
+		t.Fatalf("unexpected card: front=%q back=%q", cards[0].Front, cards[0].Back)
+	}
+}
+
 func TestAddCardsBatchAIForUser_DuplicateSkip(t *testing.T) {
 	t.Parallel()
 

@@ -4,13 +4,131 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
 	"word-learning-cli/internal/ai"
 	"word-learning-cli/internal/app"
+	"word-learning-cli/internal/domain"
+	"word-learning-cli/internal/storage/sqlite"
 )
+
+// runCardAdd adds a card to the active deck for user 0. Writes one line to out.
+func runCardAdd(ctx context.Context, store *sqlite.Store, front, back, pronunciation, example, conjugation string, out io.Writer) (domain.Card, error) {
+	service := app.NewService(store)
+	card, err := service.AddCardForActiveDeckForUser(ctx, 0, front, back, pronunciation, example, conjugation)
+	if err != nil {
+		if errors.Is(err, app.ErrActiveDeckNotSet) {
+			return domain.Card{}, fmt.Errorf("active deck is not set; run 'deck use <name...>'")
+		}
+		return domain.Card{}, err
+	}
+	if out != nil {
+		_, _ = fmt.Fprintf(out, "Card created: id=%d deck=%d\n", card.ID, card.DeckID)
+	}
+	return card, nil
+}
+
+// runCardList lists cards for the active deck. Writes to out.
+func runCardList(ctx context.Context, store *sqlite.Store, status string, out io.Writer) ([]domain.Card, error) {
+	service := app.NewService(store)
+	cards, err := service.ListCardsForActiveDeckForUser(ctx, 0, status)
+	if err != nil {
+		if errors.Is(err, app.ErrActiveDeckNotSet) {
+			return nil, fmt.Errorf("active deck is not set; run 'deck use <name...>'")
+		}
+		return nil, err
+	}
+	if out != nil {
+		printCardsTo(out, cards)
+	}
+	return cards, nil
+}
+
+// runCardGet returns the next card for the active deck and optional stats. Writes to out.
+func runCardGet(ctx context.Context, store *sqlite.Store, out io.Writer) (*domain.Card, *app.DeckStats, error) {
+	service := app.NewService(store)
+	card, stats, err := service.NextCardWithStatsForActiveDeckForUser(ctx, 0)
+	if err != nil {
+		if errors.Is(err, app.ErrActiveDeckNotSet) {
+			return nil, nil, fmt.Errorf("active deck is not set; run 'deck use <name...>'")
+		}
+		return nil, nil, err
+	}
+	if card == nil {
+		if out != nil {
+			_, _ = fmt.Fprintln(out, "No available cards right now.")
+		}
+		return nil, nil, nil
+	}
+	if out != nil {
+		printCardDetailsTo(out, *card)
+		_, _ = fmt.Fprintf(out, "Active %d, postponed %d, total %d\n", stats.Active, stats.Postponed, stats.Total)
+	}
+	return card, &stats, nil
+}
+
+// runCardRemember marks the card as remembered (longer interval).
+func runCardRemember(ctx context.Context, store *sqlite.Store, cardID int64, out io.Writer) error {
+	service := app.NewService(store)
+	if err := service.RememberCardByID(ctx, cardID); err != nil {
+		if errors.Is(err, app.ErrCardNotFound) {
+			return fmt.Errorf("card %d not found", cardID)
+		}
+		return err
+	}
+	if out != nil {
+		_, _ = fmt.Fprintf(out, "Card scheduled with longer interval: id=%d\n", cardID)
+	}
+	return nil
+}
+
+// runCardDontRemember schedules the card for short retry.
+func runCardDontRemember(ctx context.Context, store *sqlite.Store, cardID int64, out io.Writer) error {
+	service := app.NewService(store)
+	if err := service.DontRememberCardByID(ctx, cardID); err != nil {
+		if errors.Is(err, app.ErrCardNotFound) {
+			return fmt.Errorf("card %d not found", cardID)
+		}
+		return err
+	}
+	if out != nil {
+		_, _ = fmt.Fprintf(out, "Card scheduled for short retry: id=%d\n", cardID)
+	}
+	return nil
+}
+
+// runCardRemove soft-removes a card.
+func runCardRemove(ctx context.Context, store *sqlite.Store, cardID int64, out io.Writer) error {
+	service := app.NewService(store)
+	if err := service.RemoveCardByID(ctx, cardID); err != nil {
+		if errors.Is(err, app.ErrCardNotFound) {
+			return fmt.Errorf("card %d not found", cardID)
+		}
+		return err
+	}
+	if out != nil {
+		_, _ = fmt.Fprintf(out, "Card removed: id=%d\n", cardID)
+	}
+	return nil
+}
+
+// runCardRestore restores a removed card.
+func runCardRestore(ctx context.Context, store *sqlite.Store, cardID int64, out io.Writer) error {
+	service := app.NewService(store)
+	if err := service.RestoreCardByID(ctx, cardID); err != nil {
+		if errors.Is(err, app.ErrCardNotFound) {
+			return fmt.Errorf("card %d not found", cardID)
+		}
+		return err
+	}
+	if out != nil {
+		_, _ = fmt.Fprintf(out, "Card restored: id=%d\n", cardID)
+	}
+	return nil
+}
 
 func newCardCmd(ctx *commandContext) *cobra.Command {
 	cardCmd := &cobra.Command{
@@ -104,16 +222,8 @@ func newCardAddCmd(ctx *commandContext) *cobra.Command {
 		Use:   "add",
 		Short: "Add a card",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			service := app.NewService(ctx.Store)
-			card, err := service.AddCardForActiveDeckForUser(context.Background(), 0, front, back, pronunciation, example, conjugation)
-			if err != nil {
-				if errors.Is(err, app.ErrActiveDeckNotSet) {
-					return fmt.Errorf("active deck is not set; run 'deck use <name...>'")
-				}
-				return err
-			}
-			fmt.Printf("Card created: id=%d deck=%d\n", card.ID, card.DeckID)
-			return nil
+			_, err := runCardAdd(cmd.Context(), ctx.Store, front, back, pronunciation, example, conjugation, cmd.OutOrStdout())
+			return err
 		},
 	}
 
@@ -135,16 +245,8 @@ func newCardListCmd(ctx *commandContext) *cobra.Command {
 		Use:   "list",
 		Short: "List cards",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			service := app.NewService(ctx.Store)
-			cards, err := service.ListCardsForActiveDeckForUser(context.Background(), 0, status)
-			if err != nil {
-				if errors.Is(err, app.ErrActiveDeckNotSet) {
-					return fmt.Errorf("active deck is not set; run 'deck use <name...>'")
-				}
-				return err
-			}
-			printCards(cards)
-			return nil
+			_, err := runCardList(cmd.Context(), ctx.Store, status, cmd.OutOrStdout())
+			return err
 		},
 	}
 
@@ -160,15 +262,7 @@ func newCardRemoveCmd(ctx *commandContext) *cobra.Command {
 		Use:   "remove",
 		Short: "Soft-remove a card from active rotation",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			service := app.NewService(ctx.Store)
-			if err := service.RemoveCardByID(context.Background(), cardID); err != nil {
-				if errors.Is(err, app.ErrCardNotFound) {
-					return fmt.Errorf("card %d not found", cardID)
-				}
-				return err
-			}
-			fmt.Printf("Card removed: id=%d\n", cardID)
-			return nil
+			return runCardRemove(cmd.Context(), ctx.Store, cardID, cmd.OutOrStdout())
 		},
 	}
 
@@ -184,15 +278,7 @@ func newCardRestoreCmd(ctx *commandContext) *cobra.Command {
 		Use:   "restore",
 		Short: "Restore a removed card to active status",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			service := app.NewService(ctx.Store)
-			if err := service.RestoreCardByID(context.Background(), cardID); err != nil {
-				if errors.Is(err, app.ErrCardNotFound) {
-					return fmt.Errorf("card %d not found", cardID)
-				}
-				return err
-			}
-			fmt.Printf("Card restored: id=%d\n", cardID)
-			return nil
+			return runCardRestore(cmd.Context(), ctx.Store, cardID, cmd.OutOrStdout())
 		},
 	}
 
@@ -206,21 +292,8 @@ func newCardGetCmd(ctx *commandContext) *cobra.Command {
 		Use:   "get",
 		Short: "Get next available card for active deck",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			service := app.NewService(ctx.Store)
-			card, stats, err := service.NextCardWithStatsForActiveDeckForUser(context.Background(), 0)
-			if err != nil {
-				if errors.Is(err, app.ErrActiveDeckNotSet) {
-					return fmt.Errorf("active deck is not set; run 'deck use <name...>'")
-				}
-				return err
-			}
-			if card == nil {
-				fmt.Println("No available cards right now.")
-				return nil
-			}
-			printCardDetails(*card)
-			fmt.Printf("Active %d, postponed %d, total %d\n", stats.Active, stats.Postponed, stats.Total)
-			return nil
+			_, _, err := runCardGet(cmd.Context(), ctx.Store, cmd.OutOrStdout())
+			return err
 		},
 	}
 	return cmd
@@ -233,15 +306,7 @@ func newCardRememberCmd(ctx *commandContext) *cobra.Command {
 		Use:   "remember",
 		Short: "Increase next review interval",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			service := app.NewService(ctx.Store)
-			if err := service.RememberCardByID(context.Background(), cardID); err != nil {
-				if errors.Is(err, app.ErrCardNotFound) {
-					return fmt.Errorf("card %d not found", cardID)
-				}
-				return err
-			}
-			fmt.Printf("Card scheduled with longer interval: id=%d\n", cardID)
-			return nil
+			return runCardRemember(cmd.Context(), ctx.Store, cardID, cmd.OutOrStdout())
 		},
 	}
 
@@ -257,15 +322,7 @@ func newCardDontRememberCmd(ctx *commandContext) *cobra.Command {
 		Use:   "dont-remember",
 		Short: "Schedule short retry interval",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			service := app.NewService(ctx.Store)
-			if err := service.DontRememberCardByID(context.Background(), cardID); err != nil {
-				if errors.Is(err, app.ErrCardNotFound) {
-					return fmt.Errorf("card %d not found", cardID)
-				}
-				return err
-			}
-			fmt.Printf("Card scheduled for short retry: id=%d\n", cardID)
-			return nil
+			return runCardDontRemember(cmd.Context(), ctx.Store, cardID, cmd.OutOrStdout())
 		},
 	}
 

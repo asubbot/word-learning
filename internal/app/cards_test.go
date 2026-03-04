@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -463,6 +464,52 @@ func TestServiceCardValidationAndNotFound(t *testing.T) {
 	}
 	if err := svc.DontRememberCard(ctx, 9999); !errors.Is(err, ErrCardNotFound) {
 		t.Fatalf("expected ErrCardNotFound, got %v", err)
+	}
+}
+
+func TestGetCardByIDForUser(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+	deckID := mustCreateDeck(t, svc)
+	const ownerID int64 = 0
+
+	card, err := svc.AddCardForUser(ctx, ownerID, deckID, "front", "back", "", "", "")
+	if err != nil {
+		t.Fatalf("AddCardForUser: %v", err)
+	}
+
+	got, err := svc.GetCardByIDForUser(ctx, ownerID, card.ID)
+	if err != nil {
+		t.Fatalf("GetCardByIDForUser: %v", err)
+	}
+	if got == nil || got.ID != card.ID || got.Front != "front" || got.Back != "back" {
+		t.Fatalf("unexpected card: %#v", got)
+	}
+
+	_, err = svc.GetCardByIDForUser(ctx, ownerID, 99999)
+	if err == nil {
+		t.Fatal("expected error for non-existent card")
+	}
+	if !errors.Is(err, ErrCardNotFound) {
+		t.Fatalf("expected ErrCardNotFound, got %v", err)
+	}
+
+	_, err = svc.GetCardByIDForUser(ctx, ownerID, 0)
+	if err == nil {
+		t.Fatal("expected error for card id 0")
+	}
+	if !strings.Contains(err.Error(), "positive") {
+		t.Fatalf("expected validation error (positive), got %v", err)
+	}
+
+	_, err = svc.GetCardByIDForUser(ctx, ownerID, -1)
+	if err == nil {
+		t.Fatal("expected error for negative card id")
+	}
+	if !strings.Contains(err.Error(), "positive") {
+		t.Fatalf("expected validation error, got %v", err)
 	}
 }
 
