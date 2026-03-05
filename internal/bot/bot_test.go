@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 	"word-learning/internal/ai"
 	"word-learning/internal/app"
 	"word-learning/internal/storage/sqlite"
@@ -47,6 +48,12 @@ func (f *fakeAPI) Request(c tgbotapi.Chattable) (*tgbotapi.APIResponse, error) {
 
 func newTestHandler(t *testing.T) (*handler, *fakeAPI) {
 	t.Helper()
+	h, api, _ := newTestHandlerWithStore(t)
+	return h, api
+}
+
+func newTestHandlerWithStore(t *testing.T) (*handler, *fakeAPI, *sqlite.Store) {
+	t.Helper()
 
 	dbPath := filepath.Join(t.TempDir(), "bot-test.db")
 	store, err := sqlite.Open(dbPath)
@@ -69,7 +76,7 @@ func newTestHandler(t *testing.T) (*handler, *fakeAPI) {
 		newAIGenerator: func() (ai.Generator, error) {
 			return fakeAIGenerator{}, nil
 		},
-	}, api
+	}, api, store
 }
 
 type fakeFileDownloader struct {
@@ -1019,7 +1026,7 @@ func TestRunReminderTick_EligibleUserGetsMessage(t *testing.T) {
 	}
 
 	before := len(api.sentConfigs)
-	runReminderTick(ctx, h, 10, 12)
+	runReminderTick(ctx, h, 10, 12, time.Now())
 	if len(api.sentConfigs) != before+1 {
 		t.Fatalf("expected 1 reminder message; got %d new messages", len(api.sentConfigs)-before)
 	}
@@ -1056,7 +1063,7 @@ func TestRunReminderTick_NotEligibleNoMessage(t *testing.T) {
 	}
 
 	before := len(api.sentConfigs)
-	runReminderTick(ctx, h, 10, 12)
+	runReminderTick(ctx, h, 10, 12, time.Now())
 	if len(api.sentConfigs) != before {
 		t.Fatalf("expected no reminder when not eligible; got %d new messages", len(api.sentConfigs)-before)
 	}
@@ -1095,12 +1102,65 @@ func TestRunReminderTick_MultipleUsersOnlyEligibleGetsMessage(t *testing.T) {
 	}
 
 	before := len(api.sentConfigs)
-	runReminderTick(ctx, h, 10, 12)
+	runReminderTick(ctx, h, 10, 12, time.Now())
 	if len(api.sentConfigs) != before+1 {
 		t.Fatalf("expected 1 reminder; got %d new messages", len(api.sentConfigs)-before)
 	}
 	last := api.sentConfigs[len(api.sentConfigs)-1]
 	if last.ChatID != 42 {
 		t.Fatalf("expected reminder to user 42 only; got chat ID %d", last.ChatID)
+	}
+}
+
+//nolint:gocyclo // test covers 12h-since-review reminder flow with store setup
+func TestRunReminderTick_EligibleAfter12hSinceLastReview(t *testing.T) {
+	t.Parallel()
+
+	h, api, store := newTestHandlerWithStore(t)
+	ctx := context.Background()
+
+	h.allow = buildAllowlist([]int64{42})
+	deck, err := h.service.CreateDeckForUser(ctx, 42, "Deck", "EN", "RU")
+	if err != nil {
+		t.Fatalf("CreateDeckForUser: %v", err)
+	}
+	if _, err := h.service.DeckUseForUser(ctx, 42, "Deck"); err != nil {
+		t.Fatalf("DeckUseForUser: %v", err)
+	}
+	for i := 0; i < 10; i++ {
+		front := fmt.Sprintf("word%d", i)
+		if _, err := h.service.AddCardForActiveDeckForUser(ctx, 42, front, "back", "", "", ""); err != nil {
+			t.Fatalf("AddCardForActiveDeckForUser: %v", err)
+		}
+	}
+
+	cards, err := store.ListCards(ctx, deck.ID, nil)
+	if err != nil {
+		t.Fatalf("ListCards: %v", err)
+	}
+	if len(cards) < 10 {
+		t.Fatalf("expected at least 10 cards, got %d", len(cards))
+	}
+
+	now := time.Now().UTC()
+	lastReview := now.Add(-13 * time.Hour)
+	if ok, err := store.UpdateCardSchedule(ctx, cards[0].ID, now.Add(-time.Hour), 600, 2.5, 0, lastReview); err != nil || !ok {
+		t.Fatalf("UpdateCardSchedule: %v", err)
+	}
+
+	before := len(api.sentConfigs)
+	runReminderTick(ctx, h, 10, 12, now)
+	if len(api.sentConfigs) != before+1 {
+		t.Fatalf("expected 1 reminder message after 12h since last review; got %d new messages", len(api.sentConfigs)-before)
+	}
+	last := api.sentConfigs[len(api.sentConfigs)-1]
+	if last.ChatID != 42 {
+		t.Fatalf("expected chat ID 42; got %d", last.ChatID)
+	}
+	if !strings.Contains(last.Text, "Start learning") {
+		t.Fatalf("expected message to contain 'Start learning'; got %q", last.Text)
+	}
+	if !strings.Contains(last.Text, "cards due for review") {
+		t.Fatalf("expected message to contain 'cards due for review'; got %q", last.Text)
 	}
 }

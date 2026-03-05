@@ -812,13 +812,12 @@ func runReminderLoop(ctx context.Context, h *handler, intervalMin int, minOverdu
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			runReminderTick(ctx, h, minOverdue, minHoursSinceReview)
+			runReminderTick(ctx, h, minOverdue, minHoursSinceReview, time.Now())
 		}
 	}
 }
 
-func runReminderTick(ctx context.Context, h *handler, minOverdue int, minHoursSinceReview float64) {
-	now := time.Now()
+func runReminderTick(ctx context.Context, h *handler, minOverdue int, minHoursSinceReview float64, now time.Time) {
 	for userID := range h.allow {
 		eligible, overdueCount, err := h.service.ReminderEligible(ctx, userID, now, minOverdue, minHoursSinceReview)
 		if err != nil {
