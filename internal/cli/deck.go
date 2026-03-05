@@ -194,11 +194,6 @@ func runDeckImport(ctx context.Context, store *sqlite.Store, filePath string, de
 	if err != nil {
 		return domain.Deck{}, app.ImportReport{}, err
 	}
-	normalizedFrom := strings.ToUpper(strings.TrimSpace(exp.Deck.LanguageFrom))
-	normalizedTo := strings.ToUpper(strings.TrimSpace(exp.Deck.LanguageTo))
-	if normalizedFrom == normalizedTo {
-		return domain.Deck{}, app.ImportReport{}, fmt.Errorf("invalid export: language pair must be different")
-	}
 
 	service := app.NewService(store)
 	targetDeck, err := resolveTargetDeckForImport(ctx, store, service, exp, deckName, newDeckName)

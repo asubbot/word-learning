@@ -80,8 +80,13 @@ func TestServiceDeckValidation(t *testing.T) {
 	if _, err := svc.CreateDeck(ctx, "Deck", "en", "r1"); err == nil {
 		t.Fatal("expected error for invalid to language")
 	}
-	if _, err := svc.CreateDeck(ctx, "Deck", "en", "en"); err == nil {
-		t.Fatal("expected error for same language pair")
+	// Same-language pair (EN->EN) is allowed for definition/explanation decks
+	deck, err := svc.CreateDeck(ctx, "Definitions", "en", "en")
+	if err != nil {
+		t.Fatalf("CreateDeck same-language: %v", err)
+	}
+	if deck.LanguageFrom != "EN" || deck.LanguageTo != "EN" {
+		t.Fatalf("expected EN->EN, got %s->%s", deck.LanguageFrom, deck.LanguageTo)
 	}
 }
 

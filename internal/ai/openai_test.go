@@ -319,6 +319,87 @@ func TestGenerateCard_MissingPromptFile(t *testing.T) {
 	}
 }
 
+func TestGenerateCard_PromptFileNotFound(t *testing.T) {
+	t.Parallel()
+	promptsDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(promptsDir, "prompt_en-ru.txt"), []byte("prompt"), 0o644); err != nil {
+		t.Fatalf("write prompt file: %v", err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{
+				{"message": map[string]any{"content": `{"front":"word","back":"ok","pronunciation":"","example":"","conjugation":""}`}},
+			},
+		})
+	}))
+	defer server.Close()
+
+	gen := NewOpenAIGenerator(Config{
+		APIKey:     "k",
+		BaseURL:    server.URL,
+		Model:      "m",
+		TimeoutSec: 2,
+		MaxRetries: 0,
+		PromptsDir: promptsDir,
+	})
+	_, err := gen.GenerateCard(context.Background(), GenerateCardRequest{
+		LanguageFrom: "DE",
+		LanguageTo:   "FR",
+		Front:        "word",
+	})
+	if err == nil {
+		t.Fatal("expected prompt file not found error")
+	}
+	var providerErr *ProviderError
+	if !errors.As(err, &providerErr) {
+		t.Fatalf("expected ProviderError, got %T", err)
+	}
+	if providerErr.Retryable {
+		t.Fatal("expected non-retryable error for missing prompt file")
+	}
+	if !strings.Contains(err.Error(), "not found") && !strings.Contains(err.Error(), "not found/readable") {
+		t.Fatalf("expected error message to indicate file not found, got %q", err.Error())
+	}
+}
+
+func TestGenerateCard_UsesPromptEnEn(t *testing.T) {
+	t.Parallel()
+	promptsDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(promptsDir, "prompt_en-en.txt"), []byte("prompt"), 0o644); err != nil {
+		t.Fatalf("write prompt file: %v", err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{
+				{"message": map[string]any{"content": `{"front":"word","back":"a unit of language","pronunciation":"/wɜːrd/","example":"","conjugation":""}`}},
+			},
+		})
+	}))
+	defer server.Close()
+
+	gen := NewOpenAIGenerator(Config{
+		APIKey:     "k",
+		BaseURL:    server.URL,
+		Model:      "m",
+		TimeoutSec: 2,
+		MaxRetries: 0,
+		PromptsDir: promptsDir,
+	})
+	card, err := gen.GenerateCard(context.Background(), GenerateCardRequest{
+		LanguageFrom: "EN",
+		LanguageTo:   "EN",
+		Front:        "word",
+	})
+	if err != nil {
+		t.Fatalf("GenerateCard: %v", err)
+	}
+	if card.Front != "word" || card.Back != "a unit of language" {
+		t.Fatalf("unexpected card: %#v", card)
+	}
+}
+
 func TestGenerateCard_EmptyPromptFile(t *testing.T) {
 	t.Parallel()
 	promptsDir := t.TempDir()

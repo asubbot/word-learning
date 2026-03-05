@@ -48,10 +48,6 @@ func (s *Service) CreateDeckForUser(ctx context.Context, telegramUserID int64, n
 		return domain.Deck{}, fmt.Errorf("invalid --to language: %w", err)
 	}
 
-	if normalizedFrom == normalizedTo {
-		return domain.Deck{}, fmt.Errorf("language pair must be different")
-	}
-
 	return s.store.CreateDeckForOwner(ctx, telegramUserID, name, normalizedFrom, normalizedTo)
 }
 

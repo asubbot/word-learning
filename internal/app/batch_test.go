@@ -289,6 +289,39 @@ func TestAddCardsBatchAIForUser_GenerationFailure(t *testing.T) {
 	}
 }
 
+func TestAddCardsBatchAIForUser_GenerationFailureUserFriendlyReason(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := newTestService(t)
+	ctx := context.Background()
+	deckID := mustCreateDeck(t, svc)
+	generator := fakeGenerator{
+		generate: func(req ai.GenerateCardRequest) (ai.GeneratedCard, error) {
+			return ai.GeneratedCard{}, &ai.ProviderError{
+				Op:        "resolve system prompt",
+				Retryable: false,
+				Err:       errors.New("prompt file for pair de-fr not found/readable"),
+			}
+		},
+	}
+
+	report, err := svc.AddCardsBatchAIForUser(ctx, 0, generator, BatchAddAIParams{
+		DeckID: deckID,
+		Lines:  []string{"word"},
+		Mode:   BatchModeCLI,
+	})
+	if err != nil {
+		t.Fatalf("AddCardsBatchAIForUser: %v", err)
+	}
+	if report.Summary.Failed != 1 || report.Items[0].Status != BatchAddStatusFailedGeneration {
+		t.Fatalf("unexpected report: %#v", report)
+	}
+	want := "This language pair is not supported for AI generation."
+	if report.Items[0].Reason != want {
+		t.Errorf("item.Reason = %q, want %q", report.Items[0].Reason, want)
+	}
+}
+
 func TestAddCardsBatchAIForUser_ValidationFailure(t *testing.T) {
 	t.Parallel()
 

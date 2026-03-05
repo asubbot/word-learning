@@ -84,7 +84,11 @@ func (s *Service) processBatchFront(ctx context.Context, telegramUserID int64, g
 	})
 	if genErr != nil {
 		item.Status = BatchAddStatusFailedGeneration
-		item.Reason = genErr.Error()
+		if friendly := ai.UserFriendlyMessage(genErr); friendly != "" {
+			item.Reason = friendly
+		} else {
+			item.Reason = "AI generation failed. Try again later."
+		}
 		return item
 	}
 

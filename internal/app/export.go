@@ -50,9 +50,6 @@ func (s *Service) CreateDeckFromExportForUser(ctx context.Context, telegramUserI
 	if err != nil {
 		return domain.Deck{}, 0, fmt.Errorf("invalid language_to: %w", err)
 	}
-	if normalizedFrom == normalizedTo {
-		return domain.Deck{}, 0, fmt.Errorf("language pair must be different")
-	}
 	return s.store.ImportDeckForOwner(ctx, telegramUserID, exp.Deck.Name, normalizedFrom, normalizedTo, exp.Cards)
 }
 
@@ -71,9 +68,6 @@ func (s *Service) ImportCardsToDeckForUser(ctx context.Context, telegramUserID, 
 	normalizedTo, err := normalizeLanguageCode(exp.Deck.LanguageTo)
 	if err != nil {
 		return ImportReport{}, fmt.Errorf("invalid language_to: %w", err)
-	}
-	if normalizedFrom == normalizedTo {
-		return ImportReport{}, fmt.Errorf("language pair must be different")
 	}
 	deck, err := s.store.GetDeckForOwner(ctx, deckID, telegramUserID)
 	if err != nil {

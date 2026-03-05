@@ -104,6 +104,57 @@ func TestCreateDeckFromExportForUser_Success(t *testing.T) {
 	}
 }
 
+func TestCreateDeckFromExportForUser_SameLanguage(t *testing.T) {
+	t.Parallel()
+
+	svc, store := newTestService(t)
+	ctx := context.Background()
+
+	deck1, err := store.CreateDeckForOwner(ctx, 100, "Definitions", "EN", "EN")
+	if err != nil {
+		t.Fatalf("CreateDeckForOwner: %v", err)
+	}
+	_, err = store.CreateCard(ctx, sqlite.CardCreateParams{
+		DeckID: deck1.ID, Front: "ephemeral", Back: "lasting for a very short time", Pronunciation: "", Example: "", Conjugation: "",
+	})
+	if err != nil {
+		t.Fatalf("CreateCard: %v", err)
+	}
+	_, err = store.CreateCard(ctx, sqlite.CardCreateParams{
+		DeckID: deck1.ID, Front: "ubiquitous", Back: "present everywhere", Pronunciation: "", Example: "", Conjugation: "",
+	})
+	if err != nil {
+		t.Fatalf("CreateCard: %v", err)
+	}
+
+	data, err := svc.ExportDeckForUser(ctx, 100, deck1.ID)
+	if err != nil {
+		t.Fatalf("ExportDeckForUser: %v", err)
+	}
+
+	deck2, count, err := svc.CreateDeckFromExportForUser(ctx, 200, data)
+	if err != nil {
+		t.Fatalf("CreateDeckFromExportForUser: %v", err)
+	}
+	if count != 2 {
+		t.Errorf("imported count: got %d, want 2", count)
+	}
+	if deck2.LanguageFrom != "EN" || deck2.LanguageTo != "EN" {
+		t.Errorf("deck language pair: got %s->%s, want EN->EN", deck2.LanguageFrom, deck2.LanguageTo)
+	}
+	if deck2.Name != "Definitions" {
+		t.Errorf("deck name: got %q, want Definitions", deck2.Name)
+	}
+
+	cards, err := store.ListCardsForOwner(ctx, deck2.ID, 200, nil)
+	if err != nil {
+		t.Fatalf("ListCardsForOwner: %v", err)
+	}
+	if len(cards) != 2 {
+		t.Fatalf("expected 2 cards, got %d", len(cards))
+	}
+}
+
 func TestImportCardsToDeckForUser_Success(t *testing.T) {
 	t.Parallel()
 
@@ -133,6 +184,39 @@ func TestImportCardsToDeckForUser_Success(t *testing.T) {
 		t.Fatalf("expected 2 cards, got %d", len(cards))
 	}
 	if cards[0].Front != "x" || cards[1].Front != "y" {
+		t.Errorf("cards: got %q, %q", cards[0].Front, cards[1].Front)
+	}
+}
+
+func TestImportCardsToDeckForUser_SameLanguage(t *testing.T) {
+	t.Parallel()
+
+	svc, store := newTestService(t)
+	ctx := context.Background()
+
+	deck, err := store.CreateDeckForOwner(ctx, 100, "Definitions", "EN", "EN")
+	if err != nil {
+		t.Fatalf("CreateDeckForOwner: %v", err)
+	}
+
+	data := []byte(`{"version":1,"deck":{"name":"Exported","language_from":"EN","language_to":"EN"},"cards":[{"front":"ephemeral","back":"lasting for a very short time","pronunciation":"","example":"","conjugation":""},{"front":"ubiquitous","back":"present everywhere","pronunciation":"","example":"","conjugation":""}]}`)
+
+	report, err := svc.ImportCardsToDeckForUser(ctx, 100, deck.ID, data)
+	if err != nil {
+		t.Fatalf("ImportCardsToDeckForUser: %v", err)
+	}
+	if report.Created != 2 {
+		t.Errorf("created: got %d, want 2", report.Created)
+	}
+
+	cards, err := store.ListCards(ctx, deck.ID, nil)
+	if err != nil {
+		t.Fatalf("ListCards: %v", err)
+	}
+	if len(cards) != 2 {
+		t.Fatalf("expected 2 cards, got %d", len(cards))
+	}
+	if cards[0].Front != "ephemeral" || cards[1].Front != "ubiquitous" {
 		t.Errorf("cards: got %q, %q", cards[0].Front, cards[1].Front)
 	}
 }

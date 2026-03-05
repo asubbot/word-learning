@@ -333,7 +333,7 @@ func (h *handler) handleBatchAIDeckCallback(ctx context.Context, cb *tgbotapi.Ca
 	}
 	deck, found, err := h.findDeckForUserByID(ctx, cb.From.ID, deckID)
 	if err != nil {
-		return h.sendText(cb.Message.Chat.ID, fmt.Sprintf("Failed to list decks: %v", err))
+		return h.sendText(cb.Message.Chat.ID, "Failed to list decks: "+userFriendlyError(err))
 	}
 	if !found {
 		return h.notifyAndReturn(cb.ID, "Deck not found", nil)
@@ -427,7 +427,7 @@ func (h *handler) handleDeckCreateCommand(ctx context.Context, msg *tgbotapi.Mes
 	}
 	deck, err := h.service.CreateDeckForUser(ctx, userID, name, langFrom, langTo)
 	if err != nil {
-		return h.sendText(msg.Chat.ID, fmt.Sprintf("Failed to create deck: %v", err))
+		return h.sendText(msg.Chat.ID, "Failed to create deck: "+userFriendlyError(err))
 	}
 	return h.sendText(msg.Chat.ID, fmt.Sprintf("Deck created: id=%d name=%q pair=%s->%s", deck.ID, deck.Name, deck.LanguageFrom, deck.LanguageTo))
 }
@@ -435,7 +435,7 @@ func (h *handler) handleDeckCreateCommand(ctx context.Context, msg *tgbotapi.Mes
 func (h *handler) handleDeckListCommand(ctx context.Context, msg *tgbotapi.Message, userID int64) error {
 	decks, err := h.service.ListDecksForUser(ctx, userID)
 	if err != nil {
-		return h.sendText(msg.Chat.ID, fmt.Sprintf("Failed to list decks: %v", err))
+		return h.sendText(msg.Chat.ID, "Failed to list decks: "+userFriendlyError(err))
 	}
 	if len(decks) == 0 {
 		return h.sendText(msg.Chat.ID, "No decks found.")
@@ -469,7 +469,7 @@ func (h *handler) handleDeckUseCommand(ctx context.Context, msg *tgbotapi.Messag
 			}
 			return h.sendText(msg.Chat.ID, strings.TrimSpace(b.String()))
 		}
-		return h.sendText(msg.Chat.ID, err.Error())
+		return h.sendText(msg.Chat.ID, "Failed to set active deck: "+userFriendlyError(err))
 	}
 	if result.Deck == nil {
 		return h.sendText(msg.Chat.ID, "Failed to set active deck.")
@@ -480,7 +480,7 @@ func (h *handler) handleDeckUseCommand(ctx context.Context, msg *tgbotapi.Messag
 func (h *handler) handleDeckCurrentCommand(ctx context.Context, msg *tgbotapi.Message, userID int64) error {
 	deck, err := h.service.DeckCurrentForUser(ctx, userID)
 	if err != nil {
-		return h.sendText(msg.Chat.ID, fmt.Sprintf("Failed to resolve active deck: %v", err))
+		return h.sendText(msg.Chat.ID, "Failed to resolve active deck: "+userFriendlyError(err))
 	}
 	if deck == nil {
 		return h.sendText(msg.Chat.ID, "Active deck is not set. Use /deck_use <name...>.")
@@ -534,7 +534,7 @@ func (h *handler) clearImportState(userID int64) {
 func (h *handler) sendExportDeckMenu(ctx context.Context, chatID int64, userID int64) error {
 	decks, err := h.service.ListDecksForUser(ctx, userID)
 	if err != nil {
-		return h.sendText(chatID, fmt.Sprintf("Failed to list decks: %v", err))
+		return h.sendText(chatID, "Failed to list decks: "+userFriendlyError(err))
 	}
 	if len(decks) == 0 {
 		return h.sendText(chatID, "No decks found.")
@@ -558,7 +558,7 @@ func (h *handler) handleExportDeckCallback(ctx context.Context, cb *tgbotapi.Cal
 	data, err := h.service.ExportDeckForUser(ctx, cb.From.ID, deck.ID)
 	if err != nil {
 		_ = h.answerCallback(cb.ID, "Export failed")
-		return h.sendText(cb.Message.Chat.ID, fmt.Sprintf("Failed to export: %v", err))
+		return h.sendText(cb.Message.Chat.ID, "Failed to export: "+userFriendlyError(err))
 	}
 	_ = h.answerCallback(cb.ID, "Done")
 	return h.sendDocument(cb.Message.Chat.ID, export.ExportFilename(deck.Name), data)
@@ -589,20 +589,17 @@ func (h *handler) handleImportMessage(ctx context.Context, msg *tgbotapi.Message
 		}
 		data, err := h.fileDownloader.DownloadFile(ctx, msg.Document.FileID)
 		if err != nil {
-			return h.sendText(chatID, fmt.Sprintf("Failed to download file: %v", err))
+			return h.sendText(chatID, "Failed to download file: "+userFriendlyError(err))
 		}
 		exp, err := export.UnmarshalExport(data)
 		if err != nil {
-			return h.sendText(chatID, fmt.Sprintf("Failed to parse file: %v", err))
+			return h.sendText(chatID, "Failed to parse file: "+userFriendlyError(err))
 		}
 		normalizedFrom := strings.ToUpper(strings.TrimSpace(exp.Deck.LanguageFrom))
 		normalizedTo := strings.ToUpper(strings.TrimSpace(exp.Deck.LanguageTo))
-		if normalizedFrom == normalizedTo {
-			return h.sendText(chatID, "Invalid export: language pair must be different.")
-		}
 		decks, err := h.service.ListDecksForUser(ctx, userID)
 		if err != nil {
-			return h.sendText(chatID, fmt.Sprintf("Failed to list decks: %v", err))
+			return h.sendText(chatID, "Failed to list decks: "+userFriendlyError(err))
 		}
 		var suitableDecks []domain.Deck
 		for _, d := range decks {
@@ -646,11 +643,11 @@ func (h *handler) handleImportMessage(ctx context.Context, msg *tgbotapi.Message
 	}
 	deck, err := h.service.CreateDeckForUser(ctx, userID, name, state.Exp.Deck.LanguageFrom, state.Exp.Deck.LanguageTo)
 	if err != nil {
-		return h.sendText(chatID, fmt.Sprintf("Failed to create deck: %v", err))
+		return h.sendText(chatID, "Failed to create deck: "+userFriendlyError(err))
 	}
 	report, err := h.service.ImportCardsToDeckForUser(ctx, userID, deck.ID, state.Data)
 	if err != nil {
-		return h.sendText(chatID, fmt.Sprintf("Failed to add cards: %v", err))
+		return h.sendText(chatID, "Failed to add cards: "+userFriendlyError(err))
 	}
 	h.clearImportState(userID)
 	return h.sendImportSummary(chatID, deck.Name, deck.LanguageFrom, deck.LanguageTo, report)
@@ -669,7 +666,7 @@ func (h *handler) handleImportDeckCallback(ctx context.Context, cb *tgbotapi.Cal
 	report, err := h.service.ImportCardsToDeckForUser(ctx, cb.From.ID, deckID, state.Data)
 	if err != nil {
 		_ = h.answerCallback(cb.ID, "Failed")
-		return h.sendText(cb.Message.Chat.ID, fmt.Sprintf("Failed to add cards: %v", err))
+		return h.sendText(cb.Message.Chat.ID, "Failed to add cards: "+userFriendlyError(err))
 	}
 	h.clearImportState(cb.From.ID)
 	_ = h.answerCallback(cb.ID, "Done")
@@ -710,7 +707,7 @@ func (h *handler) handleCardAddCommand(ctx context.Context, msg *tgbotapi.Messag
 		if errors.Is(err, app.ErrActiveDeckNotSet) {
 			return h.sendText(msg.Chat.ID, "Active deck is not set. Use /deck_use <name...>.")
 		}
-		return h.sendText(msg.Chat.ID, fmt.Sprintf("Failed to add card: %v", err))
+		return h.sendText(msg.Chat.ID, "Failed to add card: "+userFriendlyError(err))
 	}
 	return h.sendText(msg.Chat.ID, fmt.Sprintf("Card created: id=%d deck=%d", card.ID, card.DeckID))
 }
@@ -737,7 +734,7 @@ func (h *handler) runBatchAIGeneration(ctx context.Context, chatID int64, userID
 		if errors.Is(err, app.ErrActiveDeckNotSet) {
 			return h.sendText(chatID, "Active deck is not set. Use /deck_use <name...>.")
 		}
-		return h.sendText(chatID, fmt.Sprintf("Failed to resolve active deck: %v", err))
+		return h.sendText(chatID, "Failed to resolve active deck: "+userFriendlyError(err))
 	}
 	return h.runBatchAIGenerationForDeck(ctx, chatID, userID, deck.ID, lines)
 }
@@ -745,7 +742,7 @@ func (h *handler) runBatchAIGeneration(ctx context.Context, chatID int64, userID
 func (h *handler) runBatchAIGenerationForDeck(ctx context.Context, chatID int64, userID int64, deckID int64, lines []string) error {
 	generator, err := h.newAIGenerator()
 	if err != nil {
-		return h.sendText(chatID, fmt.Sprintf("Failed to configure AI: %v", err))
+		return h.sendText(chatID, "Failed to configure AI: "+userFriendlyError(err))
 	}
 	report, err := h.service.AddCardsBatchAIForUser(ctx, userID, generator, app.BatchAddAIParams{
 		DeckID: deckID,
@@ -754,7 +751,7 @@ func (h *handler) runBatchAIGenerationForDeck(ctx context.Context, chatID int64,
 		DryRun: false,
 	})
 	if err != nil {
-		return h.sendText(chatID, fmt.Sprintf("Failed to add cards in batch: %v", err))
+		return h.sendText(chatID, "Failed to add cards in batch: "+userFriendlyError(err))
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "Batch summary: total=%d created=%d skipped_duplicates=%d failed=%d",
@@ -786,7 +783,7 @@ func (h *handler) sendNextCard(ctx context.Context, chatID int64, userID int64) 
 		if errors.Is(err, app.ErrActiveDeckNotSet) {
 			return h.sendText(chatID, "Active deck is not set. Use /deck_use <name...>.")
 		}
-		return h.sendText(chatID, fmt.Sprintf("Failed to fetch next card: %v", err))
+		return h.sendText(chatID, "Failed to fetch next card: "+userFriendlyError(err))
 	}
 	if card == nil {
 		return h.sendText(chatID, "No available cards right now.")
@@ -848,7 +845,7 @@ func runReminderTick(ctx context.Context, h *handler, minOverdue int, minHoursSi
 func (h *handler) sendSwitchDeckMenu(ctx context.Context, chatID int64, userID int64) error {
 	decks, err := h.service.ListDecksForUser(ctx, userID)
 	if err != nil {
-		return h.sendText(chatID, fmt.Sprintf("Failed to list decks: %v", err))
+		return h.sendText(chatID, "Failed to list decks: "+userFriendlyError(err))
 	}
 	if len(decks) == 0 {
 		return h.sendText(chatID, "No decks found.")
@@ -862,7 +859,7 @@ func (h *handler) sendSwitchDeckMenu(ctx context.Context, chatID int64, userID i
 func (h *handler) sendBatchAIDeckMenu(ctx context.Context, chatID int64, userID int64) error {
 	decks, err := h.service.ListDecksForUser(ctx, userID)
 	if err != nil {
-		return h.sendText(chatID, fmt.Sprintf("Failed to list decks: %v", err))
+		return h.sendText(chatID, "Failed to list decks: "+userFriendlyError(err))
 	}
 	if len(decks) == 0 {
 		return h.sendText(chatID, "No decks found.")
@@ -970,6 +967,14 @@ func (h *handler) answerCallback(callbackID string, text string) error {
 func (h *handler) notifyAndReturn(callbackID, msg string, _ error) error {
 	_ = h.answerCallback(callbackID, msg)
 	return nil
+}
+
+// userFriendlyError returns a user-facing message for err, never technical details.
+func userFriendlyError(err error) string {
+	if msg := app.UserFriendlyMessage(err); msg != "" {
+		return msg
+	}
+	return "Something went wrong. Please try again."
 }
 
 func isRetryable(err error) bool {
