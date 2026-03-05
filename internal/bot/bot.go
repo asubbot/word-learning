@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"html"
+	"io"
 	"log/slog"
 	"net"
+	"net/http"
 	"strconv"
 	"strings"
 	"sync"
@@ -16,6 +18,7 @@ import (
 	"word-learning/internal/ai"
 	"word-learning/internal/app"
 	"word-learning/internal/domain"
+	"word-learning/internal/export"
 	"word-learning/internal/storage/sqlite"
 )
 
@@ -24,19 +27,70 @@ type telegramAPI interface {
 	Request(c tgbotapi.Chattable) (*tgbotapi.APIResponse, error)
 }
 
+const maxImportFileSize = 10 * 1024 * 1024 // 10 MB
+
+type fileDownloader interface {
+	DownloadFile(ctx context.Context, fileID string) ([]byte, error)
+}
+
+type telegramFileDownloader struct {
+	api *tgbotapi.BotAPI
+}
+
+func (t *telegramFileDownloader) DownloadFile(ctx context.Context, fileID string) ([]byte, error) {
+	url, err := t.api.GetFileDirectURL(fileID)
+	if err != nil {
+		return nil, fmt.Errorf("get file url: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("download file: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("download file: status %d", resp.StatusCode)
+	}
+	if resp.ContentLength > 0 && resp.ContentLength > maxImportFileSize {
+		return nil, fmt.Errorf("file too large (max 10 MB)")
+	}
+	limited := io.LimitReader(resp.Body, maxImportFileSize+1)
+	data, err := io.ReadAll(limited)
+	if err != nil {
+		return nil, fmt.Errorf("download file: %w", err)
+	}
+	if len(data) > maxImportFileSize {
+		return nil, fmt.Errorf("file too large (max 10 MB)")
+	}
+	return data, nil
+}
+
 type handler struct {
-	api            telegramAPI
-	service        *app.Service
-	log            *slog.Logger
-	dedupe         *callbackDeduper
-	allow          map[int64]struct{}
-	newAIGenerator func() (ai.Generator, error)
-	batchAwaitMu   sync.Mutex
-	batchAwaitNext map[int64]batchAwaitState
+	api             telegramAPI
+	fileDownloader  fileDownloader
+	service         *app.Service
+	log             *slog.Logger
+	dedupe          *callbackDeduper
+	allow           map[int64]struct{}
+	newAIGenerator  func() (ai.Generator, error)
+	batchAwaitMu    sync.Mutex
+	batchAwaitNext  map[int64]batchAwaitState
+	importAwaitMu   sync.Mutex
+	importAwaitNext map[int64]importAwaitState
 }
 
 type batchAwaitState struct {
 	deckID int64
+}
+
+type importAwaitState struct {
+	Exp              *export.DeckExport
+	Data             []byte // original JSON for ImportCardsToDeckForUser
+	AwaitingDeckName bool   // true = waiting for text (new deck name)
 }
 
 type commandHandler func(context.Context, *tgbotapi.Message, int64) error
@@ -92,13 +146,14 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		return err
 	}
 
-	api, err := tgbotapi.NewBotAPI(cfg.TelegramBotToken)
+	botAPI, err := tgbotapi.NewBotAPI(cfg.TelegramBotToken)
 	if err != nil {
 		return fmt.Errorf("create telegram bot api: %w", err)
 	}
 
 	h := &handler{
-		api:            api,
+		api:            botAPI,
+		fileDownloader: &telegramFileDownloader{api: botAPI},
 		service:        app.NewService(store),
 		log:            logger,
 		dedupe:         newCallbackDeduper(),
@@ -110,8 +165,8 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 
 	updateCfg := tgbotapi.NewUpdate(0)
 	updateCfg.Timeout = cfg.PollingTimeout
-	updates := api.GetUpdatesChan(updateCfg)
-	logger.Info("telegram bot started", "bot_username", api.Self.UserName, "timeout_seconds", cfg.PollingTimeout)
+	updates := botAPI.GetUpdatesChan(updateCfg)
+	logger.Info("telegram bot started", "bot_username", botAPI.Self.UserName, "timeout_seconds", cfg.PollingTimeout)
 
 	for {
 		select {
@@ -138,8 +193,14 @@ func (h *handler) handleUpdate(ctx context.Context, update tgbotapi.Update) erro
 		if state, ok := h.consumeAwaitBatchAI(update.Message.From.ID); ok {
 			return h.handleBatchAIInputMessage(ctx, update.Message, update.Message.From.ID, state)
 		}
+		if impState, ok := h.getImportState(update.Message.From.ID); ok {
+			return h.handleImportMessage(ctx, update.Message, impState)
+		}
 		if update.Message.IsCommand() {
 			return h.handleCommand(ctx, update.Message)
+		}
+		if update.Message.Document != nil {
+			return h.sendText(update.Message.Chat.ID, "Use /deck_import to import a deck.")
 		}
 		return h.handleTextMessage(ctx, update.Message)
 	}
@@ -170,6 +231,8 @@ func (h *handler) handleCommand(ctx context.Context, msg *tgbotapi.Message) erro
 		"deck_list":         h.handleDeckListCommand,
 		"deck_use":          h.handleDeckUseCommand,
 		"deck_current":      h.handleDeckCurrentCommand,
+		"deck_export":       h.handleDeckExportCommand,
+		"deck_import":       h.handleDeckImportCommand,
 		"card_add":          h.handleCardAddCommand,
 		"card_add_batch_ai": h.handleCardAddBatchAICommand,
 		"next":              h.handleNextCommand,
@@ -195,6 +258,12 @@ func (h *handler) handleCallback(ctx context.Context, cb *tgbotapi.CallbackQuery
 	}
 	if action == "batch_ai_deck" {
 		return h.handleBatchAIDeckCallback(ctx, cb, fields)
+	}
+	if action == "export_deck" {
+		return h.handleExportDeckCallback(ctx, cb, fields)
+	}
+	if action == "import_deck" {
+		return h.handleImportDeckCallback(ctx, cb, fields)
 	}
 
 	target, ok := h.resolveCallbackTarget(ctx, cb)
@@ -410,6 +479,222 @@ func (h *handler) handleDeckCurrentCommand(ctx context.Context, msg *tgbotapi.Me
 		return h.sendText(msg.Chat.ID, "Active deck is not set. Use /deck_use <name...>.")
 	}
 	return h.sendText(msg.Chat.ID, fmt.Sprintf("Active deck: %s (%s->%s)", deck.Name, deck.LanguageFrom, deck.LanguageTo))
+}
+
+func (h *handler) handleDeckExportCommand(ctx context.Context, msg *tgbotapi.Message, userID int64) error {
+	return h.sendExportDeckMenu(ctx, msg.Chat.ID, userID)
+}
+
+func (h *handler) handleDeckImportCommand(ctx context.Context, msg *tgbotapi.Message, userID int64) error {
+	h.setAwaitImport(userID)
+	reply := tgbotapi.NewMessage(msg.Chat.ID, "Upload a .json file to import a deck.\n\nUse /deck_export to export a deck first, or get a .json file from someone else.")
+	reply.ReplyMarkup = tgbotapi.ForceReply{ForceReply: true, Selective: true}
+	_, err := h.sendWithRetry(reply)
+	return err
+}
+
+func (h *handler) setAwaitImport(userID int64) {
+	h.setImportState(userID, importAwaitState{})
+}
+
+func (h *handler) getImportState(userID int64) (importAwaitState, bool) {
+	h.importAwaitMu.Lock()
+	defer h.importAwaitMu.Unlock()
+	if h.importAwaitNext == nil {
+		return importAwaitState{}, false
+	}
+	state, ok := h.importAwaitNext[userID]
+	return state, ok
+}
+
+func (h *handler) setImportState(userID int64, state importAwaitState) {
+	h.importAwaitMu.Lock()
+	defer h.importAwaitMu.Unlock()
+	if h.importAwaitNext == nil {
+		h.importAwaitNext = make(map[int64]importAwaitState)
+	}
+	h.importAwaitNext[userID] = state
+}
+
+func (h *handler) clearImportState(userID int64) {
+	h.importAwaitMu.Lock()
+	defer h.importAwaitMu.Unlock()
+	if h.importAwaitNext != nil {
+		delete(h.importAwaitNext, userID)
+	}
+}
+
+func (h *handler) sendExportDeckMenu(ctx context.Context, chatID int64, userID int64) error {
+	decks, err := h.service.ListDecksForUser(ctx, userID)
+	if err != nil {
+		return h.sendText(chatID, fmt.Sprintf("Failed to list decks: %v", err))
+	}
+	if len(decks) == 0 {
+		return h.sendText(chatID, "No decks found.")
+	}
+	msg := tgbotapi.NewMessage(chatID, "Choose deck to export:")
+	msg.ReplyMarkup = exportDeckKeyboard(decks)
+	_, err = h.sendWithRetry(msg)
+	return err
+}
+
+func (h *handler) handleExportDeckCallback(ctx context.Context, cb *tgbotapi.CallbackQuery, fields map[string]string) error {
+	deckRaw := strings.TrimSpace(fields["deck"])
+	deckID, err := parsePositiveInt(deckRaw, "invalid deck id")
+	if err != nil {
+		_ = h.answerCallback(cb.ID, "Invalid action payload")
+		return nil
+	}
+	deck, found, err := h.findDeckForUserByID(ctx, cb.From.ID, deckID)
+	if err != nil || !found {
+		_ = h.answerCallback(cb.ID, "Deck not found")
+		return nil
+	}
+	data, err := h.service.ExportDeckForUser(ctx, cb.From.ID, deck.ID)
+	if err != nil {
+		_ = h.answerCallback(cb.ID, "Export failed")
+		return h.sendText(cb.Message.Chat.ID, fmt.Sprintf("Failed to export: %v", err))
+	}
+	_ = h.answerCallback(cb.ID, "Done")
+	return h.sendDocument(cb.Message.Chat.ID, export.ExportFilename(deck.Name), data)
+}
+
+func (h *handler) sendDocument(chatID int64, filename string, data []byte) error {
+	doc := tgbotapi.NewDocument(chatID, tgbotapi.FileBytes{Name: filename, Bytes: data})
+	_, err := h.sendWithRetry(doc)
+	return err
+}
+
+//nolint:gocyclo // import flow has multiple branches for document/text/callback
+func (h *handler) handleImportMessage(ctx context.Context, msg *tgbotapi.Message, state importAwaitState) error {
+	userID := msg.From.ID
+	chatID := msg.Chat.ID
+
+	// Awaiting document (initial state from /deck_import)
+	if state.Exp == nil {
+		if msg.Document == nil {
+			return h.sendText(chatID, "Please send a .json file. Use /deck_import to try again.")
+		}
+		fname := strings.ToLower(strings.TrimSpace(msg.Document.FileName))
+		if !strings.HasSuffix(fname, ".json") {
+			return h.sendText(chatID, "Please send a .json file. Use /deck_import to try again.")
+		}
+		if h.fileDownloader == nil {
+			return h.sendText(chatID, "File download is not available.")
+		}
+		data, err := h.fileDownloader.DownloadFile(ctx, msg.Document.FileID)
+		if err != nil {
+			return h.sendText(chatID, fmt.Sprintf("Failed to download file: %v", err))
+		}
+		exp, err := export.UnmarshalExport(data)
+		if err != nil {
+			return h.sendText(chatID, fmt.Sprintf("Failed to parse file: %v", err))
+		}
+		normalizedFrom := strings.ToUpper(strings.TrimSpace(exp.Deck.LanguageFrom))
+		normalizedTo := strings.ToUpper(strings.TrimSpace(exp.Deck.LanguageTo))
+		if normalizedFrom == normalizedTo {
+			return h.sendText(chatID, "Invalid export: language pair must be different.")
+		}
+		decks, err := h.service.ListDecksForUser(ctx, userID)
+		if err != nil {
+			return h.sendText(chatID, fmt.Sprintf("Failed to list decks: %v", err))
+		}
+		var suitableDecks []domain.Deck
+		for _, d := range decks {
+			if d.LanguageFrom == normalizedFrom && d.LanguageTo == normalizedTo {
+				suitableDecks = append(suitableDecks, d)
+			}
+		}
+		pair := fmt.Sprintf("%s->%s", normalizedFrom, normalizedTo)
+		if len(suitableDecks) > 0 {
+			text := fmt.Sprintf("Choose deck to add %d cards (%s):", len(exp.Cards), pair)
+			keyboard := importDeckKeyboard(suitableDecks)
+			msg := tgbotapi.NewMessage(chatID, text)
+			msg.ReplyMarkup = keyboard
+			if _, err := h.sendWithRetry(msg); err != nil {
+				return err
+			}
+			h.setImportState(userID, importAwaitState{Exp: exp, Data: data, AwaitingDeckName: false})
+		} else {
+			reply := tgbotapi.NewMessage(chatID, fmt.Sprintf("No deck with %s. Enter name for new deck:", pair))
+			reply.ReplyMarkup = tgbotapi.ForceReply{ForceReply: true, Selective: true}
+			if _, err := h.sendWithRetry(reply); err != nil {
+				return err
+			}
+			h.setImportState(userID, importAwaitState{Exp: exp, Data: data, AwaitingDeckName: true})
+		}
+		return nil
+	}
+
+	// Awaiting deck choice (user should use inline buttons)
+	if !state.AwaitingDeckName {
+		return h.sendText(chatID, "Use the buttons above to choose a deck.")
+	}
+
+	// Awaiting deck name (text input)
+	if msg.Document != nil {
+		return h.sendText(chatID, "Enter the name for the new deck above.")
+	}
+	name := strings.TrimSpace(msg.Text)
+	if name == "" {
+		return h.sendText(chatID, "Deck name must not be empty.")
+	}
+	deck, err := h.service.CreateDeckForUser(ctx, userID, name, state.Exp.Deck.LanguageFrom, state.Exp.Deck.LanguageTo)
+	if err != nil {
+		return h.sendText(chatID, fmt.Sprintf("Failed to create deck: %v", err))
+	}
+	report, err := h.service.ImportCardsToDeckForUser(ctx, userID, deck.ID, state.Data)
+	if err != nil {
+		return h.sendText(chatID, fmt.Sprintf("Failed to add cards: %v", err))
+	}
+	h.clearImportState(userID)
+	return h.sendImportSummary(chatID, deck.Name, deck.LanguageFrom, deck.LanguageTo, report)
+}
+
+func (h *handler) handleImportDeckCallback(ctx context.Context, cb *tgbotapi.CallbackQuery, fields map[string]string) error {
+	deckRaw := strings.TrimSpace(fields["deck"])
+	deckID, err := parsePositiveInt(deckRaw, "invalid deck id")
+	if err != nil {
+		_ = h.answerCallback(cb.ID, "Invalid action payload")
+		return nil
+	}
+	state, ok := h.getImportState(cb.From.ID)
+	if !ok || state.Exp == nil || state.Data == nil {
+		_ = h.answerCallback(cb.ID, "Import session expired. Use /deck_import to try again.")
+		return nil
+	}
+	report, err := h.service.ImportCardsToDeckForUser(ctx, cb.From.ID, deckID, state.Data)
+	if err != nil {
+		_ = h.answerCallback(cb.ID, "Failed")
+		return h.sendText(cb.Message.Chat.ID, fmt.Sprintf("Failed to add cards: %v", err))
+	}
+	h.clearImportState(cb.From.ID)
+	_ = h.answerCallback(cb.ID, "Done")
+	deck, err := h.service.GetDeckByID(ctx, deckID)
+	if err != nil || deck == nil {
+		return h.sendImportSummary(cb.Message.Chat.ID, "", "", "", report)
+	}
+	return h.sendImportSummary(cb.Message.Chat.ID, deck.Name, deck.LanguageFrom, deck.LanguageTo, report)
+}
+
+func (h *handler) sendImportSummary(chatID int64, deckName, langFrom, langTo string, report app.ImportReport) error {
+	var b strings.Builder
+	if deckName != "" {
+		fmt.Fprintf(&b, "Added cards to %q (%s->%s).\n", deckName, langFrom, langTo)
+	}
+	fmt.Fprintf(&b, "Import summary: total=%d created=%d skipped_duplicates=%d failed=%d",
+		report.Total, report.Created, report.SkippedDuplicates, report.Failed)
+	return h.sendText(chatID, b.String())
+}
+
+func importDeckKeyboard(decks []domain.Deck) tgbotapi.InlineKeyboardMarkup {
+	rows := make([][]tgbotapi.InlineKeyboardButton, 0, len(decks))
+	for _, d := range decks {
+		label := fmt.Sprintf("%s (%s->%s)", d.Name, d.LanguageFrom, d.LanguageTo)
+		payload := fmt.Sprintf("act=import_deck;deck=%d", d.ID)
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(label, payload)))
+	}
+	return tgbotapi.NewInlineKeyboardMarkup(rows...)
 }
 
 func (h *handler) handleCardAddCommand(ctx context.Context, msg *tgbotapi.Message, userID int64) error {
@@ -700,6 +985,8 @@ func helpMessage() string {
 /deck_list - list your decks
 /deck_use <name...> - set active deck by exact name
 /deck_current - show active deck
+/deck_export - export deck to JSON (choose deck, receive file named after deck)
+/deck_import - upload .json file, then choose deck or create new one to add cards to
 /card_add <front> | <back> | <pronunciation> | <example> | <conjugation> - add card to active deck
 /card_add_batch_ai then newline-separated fronts - add cards via AI to active deck
 /next - show next due card from active deck with action buttons`) // raw user-visible text
@@ -787,6 +1074,16 @@ func batchAIDeckKeyboard(decks []domain.Deck) tgbotapi.InlineKeyboardMarkup {
 	for _, d := range decks {
 		label := fmt.Sprintf("Add to %s (%s->%s)", d.Name, d.LanguageFrom, d.LanguageTo)
 		payload := fmt.Sprintf("act=batch_ai_deck;deck=%d", d.ID)
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(label, payload)))
+	}
+	return tgbotapi.NewInlineKeyboardMarkup(rows...)
+}
+
+func exportDeckKeyboard(decks []domain.Deck) tgbotapi.InlineKeyboardMarkup {
+	rows := make([][]tgbotapi.InlineKeyboardButton, 0, len(decks))
+	for _, d := range decks {
+		label := fmt.Sprintf("Export %s (%s->%s)", d.Name, d.LanguageFrom, d.LanguageTo)
+		payload := fmt.Sprintf("act=export_deck;deck=%d", d.ID)
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(label, payload)))
 	}
 	return tgbotapi.NewInlineKeyboardMarkup(rows...)

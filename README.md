@@ -31,7 +31,7 @@ go run ./cmd/wordcli card remember --id 1
 go run ./cmd/wordcli card dont-remember --id 1
 ```
 
-**More commands:** `deck list` · `deck current` · `card list [--status active|removed]` · `card remove --id N` · `card restore --id N`
+**More commands:** `deck list` · `deck current` · `deck export [--deck <name>] [-o file.json]` · `deck import <file.json> [--deck <name>|--new <name>]` · `card list [--status active|removed]` · `card remove --id N` · `card restore --id N`
 
 ---
 
@@ -61,6 +61,8 @@ go run ./cmd/wordbot
 | `/deck_create` | `<from> <to> <name...>` | e.g. `EN RU basics` |
 | `/deck_use` | `<name...>` | e.g. `basics` |
 | `/deck_list` | — | Lists your decks as inline buttons; tap to switch. |
+| `/deck_export` | — | Choose deck; receive JSON file (filename includes deck name). Share with others. |
+| `/deck_import` | — | Upload a `.json` file; choose existing deck or create new one to add cards to. |
 | `/next` | — | Shows next due card (back in spoiler); buttons: **Don't remember**, **Remember**, **Remove**. |
 | `/card_add` | front, back, pronunciation, example, conjugation | One message: five fields in order, separated by &#124;. Last two (example, conjugation) optional. |
 
@@ -92,6 +94,8 @@ She was BANISHED from the court.
 ```
 
 Same logic applies to the bot’s **Add batch AI**: send one message with one word, phrase, or context sentence per line.
+
+**Deck sharing:** Export a deck with `/deck_export` (choose deck, receive JSON file named after the deck). Share the file. Others import cards with `/deck_import` (upload file, then choose existing deck or enter name for new one), or via CLI: `deck import <file.json>` (uses single suitable deck if one exists; otherwise `--deck <name>` or `--new <name>`).
 
 ---
 

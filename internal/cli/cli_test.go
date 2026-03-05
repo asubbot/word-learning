@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"word-learning/internal/app"
 	"word-learning/internal/domain"
 	"word-learning/internal/storage/sqlite"
 )
@@ -647,5 +648,83 @@ func integrationGetCardExpectNone(t *testing.T, ctx context.Context, store *sqli
 	}
 	if g := out.String(); !strings.Contains(g, "No available cards") {
 		t.Errorf("expected 'No available cards' after remember, got: %q", g)
+	}
+}
+
+func setupDeckWithCardsForExport(t *testing.T, ctx context.Context, store *sqlite.Store, cards [][2]string) string {
+	t.Helper()
+	_, _ = runDeckCreate(ctx, store, "en", "ru", "Test", nil)
+	_, _ = runDeckUse(ctx, store, "Test", nil)
+	for _, pair := range cards {
+		_, _ = runCardAdd(ctx, store, pair[0], pair[1], "", "", "", nil)
+	}
+	return filepath.Join(t.TempDir(), "deck.json")
+}
+
+func assertDeckExportImportResult(t *testing.T, imported domain.Deck, report app.ImportReport, store *sqlite.Store, wantCards [][2]string) {
+	t.Helper()
+	if report.Created != len(wantCards) {
+		t.Errorf("import created: got %d, want %d", report.Created, len(wantCards))
+	}
+	if imported.Name != "Imported" {
+		t.Errorf("imported deck name: got %q, want Imported", imported.Name)
+	}
+	decks, _ := runDeckList(context.Background(), store, nil)
+	if len(decks) != 2 {
+		t.Errorf("expected 2 decks after import, got %d", len(decks))
+	}
+	cards, err := store.ListCards(context.Background(), imported.ID, nil)
+	if err != nil {
+		t.Fatalf("ListCards: %v", err)
+	}
+	if len(cards) != len(wantCards) {
+		t.Fatalf("expected %d cards in imported deck, got %d", len(wantCards), len(cards))
+	}
+	for i, w := range wantCards {
+		if cards[i].Front != w[0] || cards[i].Back != w[1] {
+			t.Errorf("card %d: got front=%q back=%q, want %q %q", i, cards[i].Front, cards[i].Back, w[0], w[1])
+		}
+	}
+}
+
+func TestDeckExportImport_CLI(t *testing.T) {
+	t.Parallel()
+	store := newTestStore(t)
+	ctx := context.Background()
+	var out bytes.Buffer
+
+	exportPath := setupDeckWithCardsForExport(t, ctx, store, [][2]string{{"a", "б"}, {"b", "в"}})
+	_, err := runDeckExport(ctx, store, "Test", exportPath, &out)
+	if err != nil {
+		t.Fatalf("runDeckExport: %v", err)
+	}
+	if g := out.String(); !strings.Contains(g, "Exported") || !strings.Contains(g, "Test") {
+		t.Errorf("export output: %q", g)
+	}
+
+	out.Reset()
+	imported, report, err := runDeckImport(ctx, store, exportPath, "", "Imported", &out)
+	if err != nil {
+		t.Fatalf("runDeckImport: %v", err)
+	}
+	if g := out.String(); !strings.Contains(g, "Import summary:") || !strings.Contains(g, "created=2") {
+		t.Errorf("import output: %q", g)
+	}
+	assertDeckExportImportResult(t, imported, report, store, [][2]string{{"a", "б"}, {"b", "в"}})
+}
+
+func TestDeckImport_DeckAndNewConflict(t *testing.T) {
+	t.Parallel()
+	store := newTestStore(t)
+	ctx := context.Background()
+	exportPath := setupDeckWithCardsForExport(t, ctx, store, [][2]string{{"a", "б"}})
+	_, _ = runDeckExport(ctx, store, "Test", exportPath, nil)
+
+	_, _, err := runDeckImport(ctx, store, exportPath, "Test", "NewDeck", nil)
+	if err == nil {
+		t.Fatal("expected error when both --deck and --new are set")
+	}
+	if !strings.Contains(err.Error(), "cannot use both") {
+		t.Errorf("error should mention conflict, got: %v", err)
 	}
 }

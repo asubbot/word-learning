@@ -17,6 +17,7 @@ import (
 type fakeAPI struct {
 	sentTexts      []string
 	sentConfigs    []tgbotapi.MessageConfig
+	sentDocuments  []tgbotapi.DocumentConfig
 	callbackTexts  []string
 	failSendOnCall int
 	sendCallCount  int
@@ -30,6 +31,9 @@ func (f *fakeAPI) Send(c tgbotapi.Chattable) (tgbotapi.Message, error) {
 	if msg, ok := c.(tgbotapi.MessageConfig); ok {
 		f.sentConfigs = append(f.sentConfigs, msg)
 		f.sentTexts = append(f.sentTexts, msg.Text)
+	}
+	if doc, ok := c.(tgbotapi.DocumentConfig); ok {
+		f.sentDocuments = append(f.sentDocuments, doc)
 	}
 	return tgbotapi.Message{}, nil
 }
@@ -57,14 +61,26 @@ func newTestHandler(t *testing.T) (*handler, *fakeAPI) {
 
 	api := &fakeAPI{}
 	return &handler{
-		api:     api,
-		service: app.NewService(store),
-		log:     slog.New(slog.NewTextHandler(testWriter{t: t}, nil)),
-		dedupe:  newCallbackDeduper(),
+		api:            api,
+		fileDownloader: &fakeFileDownloader{},
+		service:        app.NewService(store),
+		log:            slog.New(slog.NewTextHandler(testWriter{t: t}, nil)),
+		dedupe:         newCallbackDeduper(),
 		newAIGenerator: func() (ai.Generator, error) {
 			return fakeAIGenerator{}, nil
 		},
 	}, api
+}
+
+type fakeFileDownloader struct {
+	content []byte
+}
+
+func (f *fakeFileDownloader) DownloadFile(ctx context.Context, fileID string) ([]byte, error) {
+	if f.content != nil {
+		return f.content, nil
+	}
+	return []byte(`{"version":1,"deck":{"name":"Imported","language_from":"EN","language_to":"RU"},"cards":[{"front":"a","back":"б","pronunciation":"","example":"","conjugation":""},{"front":"b","back":"в","pronunciation":"","example":"","conjugation":""}]}`), nil
 }
 
 type fakeAIGenerator struct{}
@@ -592,6 +608,309 @@ func TestBotAddBatchAIButtonNoDecks(t *testing.T) {
 	}
 	if len(api.sentTexts) == 0 || api.sentTexts[len(api.sentTexts)-1] != "No decks found." {
 		t.Fatalf("expected no decks found text, got %#v", api.sentTexts)
+	}
+}
+
+//nolint:gocyclo // test covers export menu and callback flow
+func TestBotDeckExportCommand(t *testing.T) {
+	t.Parallel()
+
+	h, api := newTestHandler(t)
+	ctx := context.Background()
+	deck, err := h.service.CreateDeckForUser(ctx, 42, "Export Deck", "EN", "RU")
+	if err != nil {
+		t.Fatalf("CreateDeckForUser: %v", err)
+	}
+	if _, err := h.service.AddCardForUser(ctx, 42, deck.ID, "hello", "привет", "", "", ""); err != nil {
+		t.Fatalf("AddCardForUser: %v", err)
+	}
+
+	if err := h.handleUpdate(ctx, tgbotapi.Update{Message: commandMessage(100, 42, "/deck_export", "deck_export")}); err != nil {
+		t.Fatalf("deck_export command: %v", err)
+	}
+	if len(api.sentConfigs) == 0 {
+		t.Fatal("expected deck export menu")
+	}
+	last := api.sentConfigs[len(api.sentConfigs)-1]
+	if last.Text != "Choose deck to export:" {
+		t.Fatalf("expected choose deck text, got %q", last.Text)
+	}
+	markup, ok := last.ReplyMarkup.(tgbotapi.InlineKeyboardMarkup)
+	if !ok || len(markup.InlineKeyboard) == 0 {
+		t.Fatalf("expected inline keyboard with deck buttons")
+	}
+	if markup.InlineKeyboard[0][0].CallbackData == nil || !strings.Contains(*markup.InlineKeyboard[0][0].CallbackData, "act=export_deck;deck=") {
+		t.Fatalf("expected export_deck payload, got %#v", markup.InlineKeyboard[0][0].CallbackData)
+	}
+
+	cb := &tgbotapi.CallbackQuery{
+		ID:      "cb-export",
+		Data:    fmt.Sprintf("act=export_deck;deck=%d", deck.ID),
+		From:    &tgbotapi.User{ID: 42},
+		Message: &tgbotapi.Message{Chat: &tgbotapi.Chat{ID: 100}},
+	}
+	if err := h.handleUpdate(ctx, tgbotapi.Update{CallbackQuery: cb}); err != nil {
+		t.Fatalf("export_deck callback: %v", err)
+	}
+	if len(api.sentDocuments) == 0 {
+		t.Fatal("expected document to be sent")
+	}
+	// Export filename should encode deck name (File is FileBytes with Name)
+	if fb, ok := api.sentDocuments[0].File.(tgbotapi.FileBytes); ok && fb.Name != "Export_Deck.json" {
+		t.Errorf("expected filename Export_Deck.json, got %q", fb.Name)
+	}
+}
+
+func TestBotDeckImportDocument(t *testing.T) {
+	t.Parallel()
+
+	h, api := newTestHandler(t)
+	ctx := context.Background()
+
+	sendDeckImportAndAssertPrompt(t, h, api, ctx)
+
+	docMsg := &tgbotapi.Message{
+		Chat: &tgbotapi.Chat{ID: 100},
+		From: &tgbotapi.User{ID: 42},
+		Document: &tgbotapi.Document{
+			FileID:   "fake-file-id",
+			FileName: "deck.json",
+		},
+	}
+	if err := h.handleUpdate(ctx, tgbotapi.Update{Message: docMsg}); err != nil {
+		t.Fatalf("handle document: %v", err)
+	}
+	// No suitable deck (EN->RU) exists: user must enter new deck name
+	if !strings.Contains(api.sentTexts[len(api.sentTexts)-1], "Enter name for new deck") {
+		t.Fatalf("expected prompt for new deck name, got %q", api.sentTexts[len(api.sentTexts)-1])
+	}
+	// Send deck name as text
+	nameMsg := &tgbotapi.Message{Chat: &tgbotapi.Chat{ID: 100}, From: &tgbotapi.User{ID: 42}, Text: "Imported"}
+	if err := h.handleUpdate(ctx, tgbotapi.Update{Message: nameMsg}); err != nil {
+		t.Fatalf("handle deck name: %v", err)
+	}
+	assertImportSuccessMessage(t, api, "Imported", "Import summary")
+	assertImportedDeck(t, h.service, ctx, 42, "Imported")
+}
+
+func sendDeckImportAndAssertPrompt(t *testing.T, h *handler, api *fakeAPI, ctx context.Context) {
+	t.Helper()
+	if err := h.handleUpdate(ctx, tgbotapi.Update{Message: commandMessage(100, 42, "/deck_import", "deck_import")}); err != nil {
+		t.Fatalf("deck_import command: %v", err)
+	}
+	if len(api.sentConfigs) == 0 {
+		t.Fatal("expected deck_import prompt message")
+	}
+	lastConfig := api.sentConfigs[len(api.sentConfigs)-1]
+	if !strings.Contains(lastConfig.Text, "Upload") || !strings.Contains(lastConfig.Text, ".json") {
+		t.Fatalf("expected upload prompt with .json hint, got %q", lastConfig.Text)
+	}
+	if _, ok := lastConfig.ReplyMarkup.(tgbotapi.ForceReply); !ok {
+		t.Fatalf("expected ForceReply for deck_import prompt, got %T", lastConfig.ReplyMarkup)
+	}
+}
+
+func assertImportSuccessMessage(t *testing.T, api *fakeAPI, want1, want2 string) {
+	t.Helper()
+	if len(api.sentTexts) == 0 {
+		t.Fatal("expected import reply")
+	}
+	last := api.sentTexts[len(api.sentTexts)-1]
+	if !strings.Contains(last, want1) || !strings.Contains(last, want2) {
+		t.Errorf("expected import success message containing %q and %q, got %q", want1, want2, last)
+	}
+}
+
+func assertImportedDeck(t *testing.T, svc *app.Service, ctx context.Context, userID int64, wantName string) {
+	t.Helper()
+	decks, err := svc.ListDecksForUser(ctx, userID)
+	if err != nil {
+		t.Fatalf("ListDecksForUser: %v", err)
+	}
+	if len(decks) != 1 || decks[0].Name != wantName {
+		t.Errorf("expected 1 deck named %q, got %+v", wantName, decks)
+	}
+}
+
+//nolint:gocyclo // test covers import flow with deck choice
+func TestBotDeckImportDocument_WithSuitableDeck(t *testing.T) {
+	t.Parallel()
+
+	h, api := newTestHandler(t)
+	ctx := context.Background()
+
+	// Create deck with same language pair as import (EN->RU)
+	deck, err := h.service.CreateDeckForUser(ctx, 42, "My EN-RU Deck", "EN", "RU")
+	if err != nil {
+		t.Fatalf("CreateDeckForUser: %v", err)
+	}
+
+	sendDeckImportAndAssertPrompt(t, h, api, ctx)
+
+	docMsg := &tgbotapi.Message{
+		Chat: &tgbotapi.Chat{ID: 100},
+		From: &tgbotapi.User{ID: 42},
+		Document: &tgbotapi.Document{
+			FileID:   "fake-file-id",
+			FileName: "deck.json",
+		},
+	}
+	if err := h.handleUpdate(ctx, tgbotapi.Update{Message: docMsg}); err != nil {
+		t.Fatalf("handle document: %v", err)
+	}
+	// Should show deck choice keyboard
+	last := api.sentConfigs[len(api.sentConfigs)-1]
+	if !strings.Contains(last.Text, "Choose deck") || !strings.Contains(last.Text, "2 cards") {
+		t.Fatalf("expected deck choice prompt, got %q", last.Text)
+	}
+	markup, ok := last.ReplyMarkup.(tgbotapi.InlineKeyboardMarkup)
+	if !ok || len(markup.InlineKeyboard) == 0 {
+		t.Fatal("expected inline keyboard with deck buttons")
+	}
+	// Simulate user choosing the deck
+	cb := &tgbotapi.CallbackQuery{
+		ID:      "cb-import",
+		Data:    fmt.Sprintf("act=import_deck;deck=%d", deck.ID),
+		From:    &tgbotapi.User{ID: 42},
+		Message: &tgbotapi.Message{Chat: &tgbotapi.Chat{ID: 100}},
+	}
+	if err := h.handleUpdate(ctx, tgbotapi.Update{CallbackQuery: cb}); err != nil {
+		t.Fatalf("handle import callback: %v", err)
+	}
+	if len(api.sentTexts) == 0 {
+		t.Fatal("expected success message")
+	}
+	if !strings.Contains(api.sentTexts[len(api.sentTexts)-1], "Import summary") || !strings.Contains(api.sentTexts[len(api.sentTexts)-1], "created=2") {
+		t.Errorf("expected Import summary with created=2, got %q", api.sentTexts[len(api.sentTexts)-1])
+	}
+	// Cards should be in the chosen deck
+	cards, err := h.service.ListCardsInDeck(ctx, deck.ID, "")
+	if err != nil {
+		t.Fatalf("ListCardsForDeck: %v", err)
+	}
+	if len(cards) != 2 {
+		t.Errorf("expected 2 cards in deck, got %d", len(cards))
+	}
+}
+
+func TestBotDeckImportDocument_NonJsonRejected(t *testing.T) {
+	t.Parallel()
+
+	h, api := newTestHandler(t)
+	ctx := context.Background()
+
+	if err := h.handleUpdate(ctx, tgbotapi.Update{Message: commandMessage(100, 42, "/deck_import", "deck_import")}); err != nil {
+		t.Fatalf("deck_import command: %v", err)
+	}
+
+	msg := &tgbotapi.Message{
+		Chat: &tgbotapi.Chat{ID: 100},
+		From: &tgbotapi.User{ID: 42},
+		Document: &tgbotapi.Document{
+			FileID:   "fake",
+			FileName: "data.txt",
+		},
+	}
+	if err := h.handleUpdate(ctx, tgbotapi.Update{Message: msg}); err != nil {
+		t.Fatalf("handle document: %v", err)
+	}
+	if len(api.sentTexts) == 0 {
+		t.Fatal("expected reply")
+	}
+	if !strings.Contains(api.sentTexts[len(api.sentTexts)-1], ".json") {
+		t.Errorf("expected .json requirement message, got %q", api.sentTexts[len(api.sentTexts)-1])
+	}
+}
+
+func TestBotDeckImportDocument_WithoutCommandRejected(t *testing.T) {
+	t.Parallel()
+
+	h, api := newTestHandler(t)
+	ctx := context.Background()
+	msg := &tgbotapi.Message{
+		Chat: &tgbotapi.Chat{ID: 100},
+		From: &tgbotapi.User{ID: 42},
+		Document: &tgbotapi.Document{
+			FileID:   "fake",
+			FileName: "deck.json",
+		},
+	}
+
+	if err := h.handleUpdate(ctx, tgbotapi.Update{Message: msg}); err != nil {
+		t.Fatalf("handle document: %v", err)
+	}
+	if len(api.sentTexts) == 0 {
+		t.Fatal("expected reply")
+	}
+	if !strings.Contains(api.sentTexts[len(api.sentTexts)-1], "/deck_import") {
+		t.Errorf("expected /deck_import hint when document sent without command, got %q", api.sentTexts[len(api.sentTexts)-1])
+	}
+}
+
+func TestBotDeckImportCommandShowsUploadPromptWithForceReply(t *testing.T) {
+	t.Parallel()
+
+	h, api := newTestHandler(t)
+	ctx := context.Background()
+
+	if err := h.handleUpdate(ctx, tgbotapi.Update{Message: commandMessage(100, 42, "/deck_import", "deck_import")}); err != nil {
+		t.Fatalf("deck_import command: %v", err)
+	}
+	if len(api.sentConfigs) == 0 {
+		t.Fatal("expected message")
+	}
+	cfg := api.sentConfigs[len(api.sentConfigs)-1]
+	if !strings.Contains(cfg.Text, "Upload") {
+		t.Errorf("expected Upload in prompt, got %q", cfg.Text)
+	}
+	if !strings.Contains(cfg.Text, "deck_export") {
+		t.Errorf("expected deck_export hint in prompt, got %q", cfg.Text)
+	}
+	if _, ok := cfg.ReplyMarkup.(tgbotapi.ForceReply); !ok {
+		t.Fatalf("expected ForceReply, got %T", cfg.ReplyMarkup)
+	}
+}
+
+func TestBotDeckImportTextInsteadOfDocumentShowsRetryHint(t *testing.T) {
+	t.Parallel()
+
+	h, api := newTestHandler(t)
+	ctx := context.Background()
+
+	if err := h.handleUpdate(ctx, tgbotapi.Update{Message: commandMessage(100, 42, "/deck_import", "deck_import")}); err != nil {
+		t.Fatalf("deck_import command: %v", err)
+	}
+
+	if err := h.handleUpdate(ctx, tgbotapi.Update{Message: plainMessage(100, 42, "some text instead of file")}); err != nil {
+		t.Fatalf("handle text after deck_import: %v", err)
+	}
+	if len(api.sentTexts) == 0 {
+		t.Fatal("expected reply")
+	}
+	last := api.sentTexts[len(api.sentTexts)-1]
+	if !strings.Contains(last, ".json") || !strings.Contains(last, "/deck_import") {
+		t.Errorf("expected retry hint with .json and /deck_import, got %q", last)
+	}
+}
+
+func TestBotHelpIncludesDeckExportAndImport(t *testing.T) {
+	t.Parallel()
+
+	h, api := newTestHandler(t)
+	ctx := context.Background()
+
+	if err := h.handleUpdate(ctx, tgbotapi.Update{Message: commandMessage(100, 42, "/help", "help")}); err != nil {
+		t.Fatalf("help command: %v", err)
+	}
+	if len(api.sentTexts) == 0 {
+		t.Fatal("expected help message")
+	}
+	help := api.sentTexts[len(api.sentTexts)-1]
+	if !strings.Contains(help, "/deck_export") {
+		t.Errorf("help should mention /deck_export, got %q", help)
+	}
+	if !strings.Contains(help, "/deck_import") {
+		t.Errorf("help should mention /deck_import, got %q", help)
 	}
 }
 

@@ -53,5 +53,11 @@ run card list --status removed
 run card restore --id 1
 run card list --status active
 
+# deck export / import (README "Deck sharing")
+run deck export -o "$ROOT/data/readme-export.json"
+run deck import "$ROOT/data/readme-export.json"
+run deck list
+rm -f "$ROOT/data/readme-export.json"
+
 rm -f "$TEST_DB_PATH"
 echo "README check OK"
