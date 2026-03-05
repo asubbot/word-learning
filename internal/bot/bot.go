@@ -185,40 +185,51 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 
 func (h *handler) handleUpdate(ctx context.Context, update tgbotapi.Update) error {
 	if update.Message != nil {
-		if update.Message.From == nil {
-			return nil
-		}
-		if !h.isAllowed(update.Message.From.ID) {
-			h.log.Warn("deny message from non-allowlisted user", "user_id", update.Message.From.ID)
-			return h.sendText(update.Message.Chat.ID, "Access denied.")
-		}
-		if state, ok := h.consumeAwaitBatchAI(update.Message.From.ID); ok {
-			return h.handleBatchAIInputMessage(ctx, update.Message, update.Message.From.ID, state)
-		}
-		if impState, ok := h.getImportState(update.Message.From.ID); ok {
-			return h.handleImportMessage(ctx, update.Message, impState)
-		}
-		if update.Message.IsCommand() {
-			return h.handleCommand(ctx, update.Message)
-		}
-		if update.Message.Document != nil {
-			return h.sendText(update.Message.Chat.ID, "Use /deck_import to import a deck.")
-		}
-		return h.handleTextMessage(ctx, update.Message)
+		return h.handleMessageUpdate(ctx, update)
 	}
-
 	if update.CallbackQuery != nil {
-		if update.CallbackQuery.From == nil {
-			return nil
-		}
-		if !h.isAllowed(update.CallbackQuery.From.ID) {
-			h.log.Warn("deny callback from non-allowlisted user", "user_id", update.CallbackQuery.From.ID)
-			return h.notifyAndReturn(update.CallbackQuery.ID, "Access denied.", nil)
-		}
-		return h.handleCallback(ctx, update.CallbackQuery)
+		return h.handleCallbackUpdate(ctx, update)
 	}
-
 	return nil
+}
+
+func (h *handler) handleMessageUpdate(ctx context.Context, update tgbotapi.Update) error {
+	msg := update.Message
+	if msg.From == nil {
+		return nil
+	}
+	if msg.IsCommand() && strings.ToLower(msg.Command()) == "whoami" {
+		return h.handleWhoAmICommand(ctx, msg, msg.From.ID)
+	}
+	if !h.isAllowed(msg.From.ID) {
+		h.log.Warn("deny message from non-allowlisted user", "user_id", msg.From.ID)
+		return h.sendText(msg.Chat.ID, "Access denied.")
+	}
+	if state, ok := h.consumeAwaitBatchAI(msg.From.ID); ok {
+		return h.handleBatchAIInputMessage(ctx, msg, msg.From.ID, state)
+	}
+	if impState, ok := h.getImportState(msg.From.ID); ok {
+		return h.handleImportMessage(ctx, msg, impState)
+	}
+	if msg.IsCommand() {
+		return h.handleCommand(ctx, msg)
+	}
+	if msg.Document != nil {
+		return h.sendText(msg.Chat.ID, "Use /deck_import to import a deck.")
+	}
+	return h.handleTextMessage(ctx, msg)
+}
+
+func (h *handler) handleCallbackUpdate(ctx context.Context, update tgbotapi.Update) error {
+	cb := update.CallbackQuery
+	if cb.From == nil {
+		return nil
+	}
+	if !h.isAllowed(cb.From.ID) {
+		h.log.Warn("deny callback from non-allowlisted user", "user_id", cb.From.ID)
+		return h.notifyAndReturn(cb.ID, "Access denied.", nil)
+	}
+	return h.handleCallback(ctx, cb)
 }
 
 func (h *handler) handleCommand(ctx context.Context, msg *tgbotapi.Message) error {
