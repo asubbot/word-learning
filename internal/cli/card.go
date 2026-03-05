@@ -7,12 +7,12 @@ import (
 	"io"
 	"os"
 	"strings"
-
-	"github.com/spf13/cobra"
 	"word-learning/internal/ai"
 	"word-learning/internal/app"
 	"word-learning/internal/domain"
 	"word-learning/internal/storage/sqlite"
+
+	"github.com/spf13/cobra"
 )
 
 // runCardAdd adds a card to the active deck for user 0. Writes one line to out.

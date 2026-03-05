@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -175,7 +176,8 @@ func asProviderError(err error, target **ProviderError) bool {
 	if err == nil {
 		return false
 	}
-	providerErr, ok := err.(*ProviderError)
+	providerErr := &ProviderError{}
+	ok := errors.As(err, &providerErr)
 	if !ok {
 		return false
 	}

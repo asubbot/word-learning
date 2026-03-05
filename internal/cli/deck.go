@@ -7,12 +7,12 @@ import (
 	"io"
 	"os"
 	"strings"
-
-	"github.com/spf13/cobra"
 	"word-learning/internal/app"
 	"word-learning/internal/domain"
 	"word-learning/internal/export"
 	"word-learning/internal/storage/sqlite"
+
+	"github.com/spf13/cobra"
 )
 
 // runDeckCreate creates a deck and writes a line to out. Returns the created deck or error.
@@ -120,7 +120,7 @@ func runDeckExport(ctx context.Context, store *sqlite.Store, deckName, outputPat
 		return nil, err
 	}
 	if outputPath != "" {
-		if err := os.WriteFile(outputPath, data, 0644); err != nil {
+		if err := os.WriteFile(outputPath, data, 0o644); err != nil {
 			return nil, fmt.Errorf("write file: %w", err)
 		}
 		if out != nil {

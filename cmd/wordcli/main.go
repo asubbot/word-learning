@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"os"
-
 	"word-learning/internal/cli"
 )
 

@@ -1,7 +1,6 @@
 version: "2"
 run:
   modules-download-mode: readonly
-# errcheck, staticcheck, govet, ineffassign, unused, gocyclo (min-complexity 12)
 # gosec disabled: many false positives (G117/G304/G703/G704/G306) in config/tests
 linters:
   enable:
@@ -11,9 +10,29 @@ linters:
     - ineffassign
     - unused
     - gocyclo
+    # Style (gosimple merged into staticcheck)
+    - misspell
+    # Error handling
+    - errorlint
+    - nilerr
+    # Tests
+    - paralleltest
+    - thelper
+    # Project-specific (HTTP, SQL, slog)
+    - bodyclose
+    - rowserrcheck
+    - sloglint
+    # nolint directive validation
+    - nolintlint
   settings:
     gocyclo:
       min-complexity: 12
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+    # Only report incorrect t.Parallel() usage, not missing (enable when tests are ready)
+    paralleltest:
+      ignore-missing: true
   exclusions:
     generated: lax
     paths:
@@ -24,6 +43,9 @@ issues:
   max-issues-per-linter: 0
   max-same-issues: 0
 formatters:
+  enable:
+    - goimports
+    - gofumpt
   exclusions:
     generated: lax
     paths:

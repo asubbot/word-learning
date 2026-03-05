@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"word-learning/internal/storage/sqlite"
 
 	"github.com/spf13/cobra"
-	"word-learning/internal/storage/sqlite"
 )
 
 const dbPathEnvVar = "WORDLEARN_DB_PATH"

@@ -13,13 +13,13 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"word-learning/internal/ai"
 	"word-learning/internal/app"
 	"word-learning/internal/domain"
 	"word-learning/internal/export"
 	"word-learning/internal/storage/sqlite"
+
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 type telegramAPI interface {
@@ -93,8 +93,10 @@ type importAwaitState struct {
 	AwaitingDeckName bool   // true = waiting for text (new deck name)
 }
 
-type commandHandler func(context.Context, *tgbotapi.Message, int64) error
-type callbackActionHandler func(context.Context, int64, int64) error
+type (
+	commandHandler        func(context.Context, *tgbotapi.Message, int64) error
+	callbackActionHandler func(context.Context, int64, int64) error
+)
 
 type callbackTarget struct {
 	callbackID string
@@ -211,8 +213,7 @@ func (h *handler) handleUpdate(ctx context.Context, update tgbotapi.Update) erro
 		}
 		if !h.isAllowed(update.CallbackQuery.From.ID) {
 			h.log.Warn("deny callback from non-allowlisted user", "user_id", update.CallbackQuery.From.ID)
-			_ = h.answerCallback(update.CallbackQuery.ID, "Access denied.")
-			return nil
+			return h.notifyAndReturn(update.CallbackQuery.ID, "Access denied.", nil)
 		}
 		return h.handleCallback(ctx, update.CallbackQuery)
 	}
@@ -271,8 +272,7 @@ func (h *handler) handleCallback(ctx context.Context, cb *tgbotapi.CallbackQuery
 		return nil
 	}
 	if err := h.executeCallbackAction(ctx, target); err != nil {
-		_ = h.answerCallback(target.callbackID, "Action failed")
-		return nil
+		return h.notifyAndReturn(target.callbackID, "Action failed", err)
 	}
 	if err := h.answerCallback(target.callbackID, "Done"); err != nil {
 		h.log.Warn("answer callback", "error", err)
@@ -284,13 +284,11 @@ func (h *handler) handleUseDeckCallback(ctx context.Context, cb *tgbotapi.Callba
 	deckRaw := strings.TrimSpace(fields["deck"])
 	deckID, err := parsePositiveInt(deckRaw, "invalid deck id")
 	if err != nil {
-		_ = h.answerCallback(cb.ID, "Invalid action payload")
-		return nil
+		return h.notifyAndReturn(cb.ID, "Invalid action payload", err)
 	}
 	deck, err := h.service.DeckUseByIDForUser(ctx, cb.From.ID, deckID)
 	if err != nil {
-		_ = h.answerCallback(cb.ID, "Deck not found")
-		return nil
+		return h.notifyAndReturn(cb.ID, "Deck not found", err)
 	}
 	if err := h.answerCallback(cb.ID, "Done"); err != nil {
 		h.log.Warn("answer callback", "error", err)
@@ -320,16 +318,14 @@ func (h *handler) handleBatchAIDeckCallback(ctx context.Context, cb *tgbotapi.Ca
 	deckRaw := strings.TrimSpace(fields["deck"])
 	deckID, err := parsePositiveInt(deckRaw, "invalid deck id")
 	if err != nil {
-		_ = h.answerCallback(cb.ID, "Invalid action payload")
-		return nil
+		return h.notifyAndReturn(cb.ID, "Invalid action payload", err)
 	}
 	deck, found, err := h.findDeckForUserByID(ctx, cb.From.ID, deckID)
 	if err != nil {
 		return h.sendText(cb.Message.Chat.ID, fmt.Sprintf("Failed to list decks: %v", err))
 	}
 	if !found {
-		_ = h.answerCallback(cb.ID, "Deck not found")
-		return nil
+		return h.notifyAndReturn(cb.ID, "Deck not found", nil)
 	}
 	if err := h.answerCallback(cb.ID, "Done"); err != nil {
 		h.log.Warn("answer callback", "error", err)
@@ -542,13 +538,11 @@ func (h *handler) handleExportDeckCallback(ctx context.Context, cb *tgbotapi.Cal
 	deckRaw := strings.TrimSpace(fields["deck"])
 	deckID, err := parsePositiveInt(deckRaw, "invalid deck id")
 	if err != nil {
-		_ = h.answerCallback(cb.ID, "Invalid action payload")
-		return nil
+		return h.notifyAndReturn(cb.ID, "Invalid action payload", err)
 	}
 	deck, found, err := h.findDeckForUserByID(ctx, cb.From.ID, deckID)
 	if err != nil || !found {
-		_ = h.answerCallback(cb.ID, "Deck not found")
-		return nil
+		return h.notifyAndReturn(cb.ID, "Deck not found", err)
 	}
 	data, err := h.service.ExportDeckForUser(ctx, cb.From.ID, deck.ID)
 	if err != nil {
@@ -655,13 +649,11 @@ func (h *handler) handleImportDeckCallback(ctx context.Context, cb *tgbotapi.Cal
 	deckRaw := strings.TrimSpace(fields["deck"])
 	deckID, err := parsePositiveInt(deckRaw, "invalid deck id")
 	if err != nil {
-		_ = h.answerCallback(cb.ID, "Invalid action payload")
-		return nil
+		return h.notifyAndReturn(cb.ID, "Invalid action payload", err)
 	}
 	state, ok := h.getImportState(cb.From.ID)
 	if !ok || state.Exp == nil || state.Data == nil {
-		_ = h.answerCallback(cb.ID, "Import session expired. Use /deck_import to try again.")
-		return nil
+		return h.notifyAndReturn(cb.ID, "Import session expired. Use /deck_import to try again.", nil)
 	}
 	report, err := h.service.ImportCardsToDeckForUser(ctx, cb.From.ID, deckID, state.Data)
 	if err != nil {
@@ -961,6 +953,13 @@ func (h *handler) answerCallback(callbackID string, text string) error {
 		delay *= 2
 	}
 	return lastErr
+}
+
+// notifyAndReturn reports msg to user via answerCallback and returns nil.
+// Use when the error is user-facing and should not propagate.
+func (h *handler) notifyAndReturn(callbackID, msg string, _ error) error {
+	_ = h.answerCallback(callbackID, msg)
+	return nil
 }
 
 func isRetryable(err error) bool {

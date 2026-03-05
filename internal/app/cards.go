@@ -7,13 +7,14 @@ import (
 	"math"
 	"strings"
 	"time"
-
 	"word-learning/internal/domain"
 	"word-learning/internal/storage/sqlite"
 )
 
-var ErrCardNotFound = errors.New("card not found")
-var ErrCardAlreadyExists = errors.New("card with this front already exists in deck")
+var (
+	ErrCardNotFound      = errors.New("card not found")
+	ErrCardAlreadyExists = errors.New("card with this front already exists in deck")
+)
 
 type DeckStats struct {
 	Active    int64

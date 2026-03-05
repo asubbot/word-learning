@@ -7,11 +7,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"word-learning/internal/ai"
 	"word-learning/internal/app"
 	"word-learning/internal/storage/sqlite"
+
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 type fakeAPI struct {

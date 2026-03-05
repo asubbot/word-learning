@@ -4,7 +4,6 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
-
 	"word-learning/internal/domain"
 	"word-learning/internal/export"
 )
@@ -102,7 +101,8 @@ func TestExportDeckForOwner_ExcludesRemoved(t *testing.T) {
 
 func assertCardFields(t *testing.T, cards []domain.Card, want []struct {
 	Front, Back, Pronunciation, Example, Conjugation string
-}) {
+},
+) {
 	t.Helper()
 	if len(cards) != len(want) {
 		t.Fatalf("cards: got %d, want %d", len(cards), len(want))

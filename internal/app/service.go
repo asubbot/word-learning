@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
-
 	"word-learning/internal/domain"
 	"word-learning/internal/storage/sqlite"
 )
@@ -16,8 +15,10 @@ type Service struct {
 	store *sqlite.Store
 }
 
-var ErrActiveDeckNotSet = fmt.Errorf("active deck is not set")
-var ErrDeckNameAmbiguous = fmt.Errorf("deck name is ambiguous")
+var (
+	ErrActiveDeckNotSet  = fmt.Errorf("active deck is not set")
+	ErrDeckNameAmbiguous = fmt.Errorf("deck name is ambiguous")
+)
 
 type DeckUseResult struct {
 	Deck       *domain.Deck
