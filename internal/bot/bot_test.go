@@ -146,6 +146,46 @@ func plainMessage(chatID int64, userID int64, text string) *tgbotapi.Message {
 	}
 }
 
+func TestCancel_ExitsDeckCreateFlow(t *testing.T) {
+	t.Parallel()
+
+	promptsDir := filepath.Join(t.TempDir(), "prompts")
+	if err := os.MkdirAll(promptsDir, 0o755); err != nil {
+		t.Fatalf("mkdir prompts: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(promptsDir, "prompt_en-ru.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatalf("write prompt: %v", err)
+	}
+
+	h, api, _ := newTestHandlerWithStoreAndPromptsDir(t, promptsDir)
+	ctx := context.Background()
+
+	if err := h.handleUpdate(ctx, tgbotapi.Update{Message: commandMessage(100, 42, "/deck_create", "deck_create")}); err != nil {
+		t.Fatalf("deck_create: %v", err)
+	}
+	if err := h.handleUpdate(ctx, tgbotapi.Update{Message: plainMessage(100, 42, "Aborted Deck")}); err != nil {
+		t.Fatalf("deck name: %v", err)
+	}
+	// Now in step 2 (choose language pair). Send /cancel.
+	if err := h.handleUpdate(ctx, tgbotapi.Update{Message: commandMessage(100, 42, "/cancel", "cancel")}); err != nil {
+		t.Fatalf("cancel: %v", err)
+	}
+	if len(api.sentTexts) == 0 || api.sentTexts[len(api.sentTexts)-1] != "Cancelled." {
+		t.Fatalf("expected Cancelled., got %#v", api.sentTexts)
+	}
+	decks, err := h.service.ListDecksForUser(ctx, 42)
+	if err != nil || len(decks) != 0 {
+		t.Fatalf("expected no deck after cancel, got %+v err=%v", decks, err)
+	}
+	// Next message should not be treated as deck create flow
+	if err := h.handleUpdate(ctx, tgbotapi.Update{Message: plainMessage(100, 42, "random text")}); err != nil {
+		t.Fatalf("post-cancel message: %v", err)
+	}
+	if !strings.Contains(api.sentTexts[len(api.sentTexts)-1], "Use /help") {
+		t.Fatalf("expected help hint after cancel, got %q", api.sentTexts[len(api.sentTexts)-1])
+	}
+}
+
 func TestDeckCreate_OneShotBackwardCompat(t *testing.T) {
 	t.Parallel()
 

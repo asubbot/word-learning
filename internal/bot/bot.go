@@ -214,6 +214,9 @@ func (h *handler) handleMessageUpdate(ctx context.Context, update tgbotapi.Updat
 		h.log.Warn("deny message from non-allowlisted user", "user_id", msg.From.ID)
 		return h.sendText(msg.Chat.ID, "Access denied.")
 	}
+	if msg.IsCommand() && strings.ToLower(msg.Command()) == "cancel" {
+		return h.handleCancelCommand(ctx, msg.Chat.ID, msg.From.ID)
+	}
 	if state, ok := h.consumeAwaitBatchAI(msg.From.ID); ok {
 		return h.handleBatchAIInputMessage(ctx, msg, msg.From.ID, state)
 	}
@@ -437,6 +440,22 @@ func (h *handler) handleHelpCommand(ctx context.Context, msg *tgbotapi.Message, 
 func (h *handler) handleWhoAmICommand(ctx context.Context, msg *tgbotapi.Message, userID int64) error {
 	_ = ctx
 	return h.sendText(msg.Chat.ID, fmt.Sprintf("Your Telegram user ID: %d", userID))
+}
+
+func (h *handler) handleCancelCommand(ctx context.Context, chatID int64, userID int64) error {
+	_ = ctx
+	h.clearDeckCreateState(userID)
+	h.clearImportState(userID)
+	h.clearAwaitBatchAI(userID)
+	return h.sendText(chatID, "Cancelled.")
+}
+
+func (h *handler) clearAwaitBatchAI(userID int64) {
+	h.batchAwaitMu.Lock()
+	defer h.batchAwaitMu.Unlock()
+	if h.batchAwaitNext != nil {
+		delete(h.batchAwaitNext, userID)
+	}
 }
 
 func (h *handler) handleDeckCreateCommand(ctx context.Context, msg *tgbotapi.Message, userID int64) error {
@@ -1118,6 +1137,7 @@ func helpMessage() string {
 /start - show welcome message
 /help - show this help
 /whoami - show your Telegram user ID
+/cancel - exit deck creation, import, or batch AI flow
 /deck_create - create deck (guided flow if no args, or /deck_create <from> <to> <name>)
 /deck_list - list your decks
 /deck_use <name...> - set active deck by exact name

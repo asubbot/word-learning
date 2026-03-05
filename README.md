@@ -66,6 +66,7 @@ go run ./cmd/wordbot
 | `/next` | — | Shows next due card (back in spoiler); buttons: **Don't remember**, **Remember**, **Remove**. |
 | `/card_add` | front, back, pronunciation, example, conjugation | One message: five fields in order, separated by &#124;. Last two (example, conjugation) optional. |
 | `/whoami` | — | Shows your Telegram user ID (useful for allowlist). |
+| `/cancel` | — | Exit deck creation, import, or batch AI flow. |
 
 ---
 
