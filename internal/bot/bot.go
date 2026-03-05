@@ -70,17 +70,25 @@ func (t *telegramFileDownloader) DownloadFile(ctx context.Context, fileID string
 }
 
 type handler struct {
-	api             telegramAPI
-	fileDownloader  fileDownloader
-	service         *app.Service
-	log             *slog.Logger
-	dedupe          *callbackDeduper
-	allow           map[int64]struct{}
-	newAIGenerator  func() (ai.Generator, error)
-	batchAwaitMu    sync.Mutex
-	batchAwaitNext  map[int64]batchAwaitState
-	importAwaitMu   sync.Mutex
-	importAwaitNext map[int64]importAwaitState
+	api                 telegramAPI
+	fileDownloader      fileDownloader
+	service             *app.Service
+	log                 *slog.Logger
+	dedupe              *callbackDeduper
+	allow               map[int64]struct{}
+	newAIGenerator      func() (ai.Generator, error)
+	promptsDir          string
+	batchAwaitMu        sync.Mutex
+	batchAwaitNext      map[int64]batchAwaitState
+	importAwaitMu       sync.Mutex
+	importAwaitNext     map[int64]importAwaitState
+	deckCreateAwaitMu   sync.Mutex
+	deckCreateAwaitNext map[int64]deckCreateAwaitState
+}
+
+type deckCreateAwaitState struct {
+	Step int    // 1 = awaiting name, 2 = awaiting pair
+	Name string // set when step 2
 }
 
 type batchAwaitState struct {
@@ -161,6 +169,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		dedupe:         newCallbackDeduper(),
 		allow:          buildAllowlist(cfg.AllowedUserIDs),
 		newAIGenerator: ai.NewGeneratorFromEnv,
+		promptsDir:     cfg.PromptsDir,
 	}
 
 	go runReminderLoop(ctx, h, cfg.ReminderIntervalMin, cfg.ReminderMinOverdue, cfg.ReminderMinHoursSinceReview)
@@ -211,6 +220,9 @@ func (h *handler) handleMessageUpdate(ctx context.Context, update tgbotapi.Updat
 	if impState, ok := h.getImportState(msg.From.ID); ok {
 		return h.handleImportMessage(ctx, msg, impState)
 	}
+	if deckState, ok := h.getDeckCreateState(msg.From.ID); ok {
+		return h.handleDeckCreateMessage(ctx, msg, msg.From.ID, deckState)
+	}
 	if msg.IsCommand() {
 		return h.handleCommand(ctx, msg)
 	}
@@ -256,6 +268,7 @@ func (h *handler) handleCommand(ctx context.Context, msg *tgbotapi.Message) erro
 	return handlerFn(ctx, msg, userID)
 }
 
+//nolint:gocyclo // callback routing has many action branches
 func (h *handler) handleCallback(ctx context.Context, cb *tgbotapi.CallbackQuery) error {
 	if cb == nil || cb.Message == nil || cb.From == nil {
 		return nil
@@ -276,6 +289,12 @@ func (h *handler) handleCallback(ctx context.Context, cb *tgbotapi.CallbackQuery
 	}
 	if action == "import_deck" {
 		return h.handleImportDeckCallback(ctx, cb, fields)
+	}
+	if action == "create_deck_pair" {
+		return h.handleCreateDeckPairCallback(ctx, cb, fields)
+	}
+	if action == "create_deck_start" {
+		return h.handleCreateDeckStartCallback(ctx, cb)
 	}
 
 	target, ok := h.resolveCallbackTarget(ctx, cb)
@@ -421,15 +440,89 @@ func (h *handler) handleWhoAmICommand(ctx context.Context, msg *tgbotapi.Message
 }
 
 func (h *handler) handleDeckCreateCommand(ctx context.Context, msg *tgbotapi.Message, userID int64) error {
-	name, langFrom, langTo, err := parseDeckCreateArgs(msg.CommandArguments())
-	if err != nil {
-		return h.sendText(msg.Chat.ID, err.Error())
+	args := strings.TrimSpace(msg.CommandArguments())
+	if args != "" {
+		name, langFrom, langTo, err := parseDeckCreateArgs(args)
+		if err != nil {
+			return h.sendText(msg.Chat.ID, err.Error())
+		}
+		deck, err := h.service.CreateDeckForUser(ctx, userID, name, langFrom, langTo)
+		if err != nil {
+			return h.sendText(msg.Chat.ID, "Failed to create deck: "+userFriendlyError(err))
+		}
+		return h.sendText(msg.Chat.ID, fmt.Sprintf("Deck created: id=%d name=%q pair=%s->%s", deck.ID, deck.Name, deck.LanguageFrom, deck.LanguageTo))
 	}
-	deck, err := h.service.CreateDeckForUser(ctx, userID, name, langFrom, langTo)
-	if err != nil {
-		return h.sendText(msg.Chat.ID, "Failed to create deck: "+userFriendlyError(err))
+	h.setDeckCreateState(userID, deckCreateAwaitState{Step: 1})
+	reply := tgbotapi.NewMessage(msg.Chat.ID, "Enter deck name:")
+	reply.ReplyMarkup = tgbotapi.ForceReply{ForceReply: true, Selective: true}
+	_, err := h.sendWithRetry(reply)
+	return err
+}
+
+func (h *handler) handleDeckCreateMessage(ctx context.Context, msg *tgbotapi.Message, userID int64, state deckCreateAwaitState) error {
+	chatID := msg.Chat.ID
+	if state.Step == 1 {
+		name := strings.TrimSpace(msg.Text)
+		if name == "" {
+			return h.sendText(chatID, "Deck name cannot be empty. Enter deck name:")
+		}
+		pairs := ai.ListAvailableLanguagePairs(h.promptsDir)
+		if len(pairs) == 0 {
+			h.clearDeckCreateState(userID)
+			return h.sendText(chatID, "No supported language pairs found. Use /deck_create <from> <to> <name> to create a deck manually.")
+		}
+		h.setDeckCreateState(userID, deckCreateAwaitState{Step: 2, Name: name})
+		reply := tgbotapi.NewMessage(chatID, "Choose language pair:")
+		reply.ReplyMarkup = languagePairKeyboard(pairs)
+		_, err := h.sendWithRetry(reply)
+		return err
 	}
-	return h.sendText(msg.Chat.ID, fmt.Sprintf("Deck created: id=%d name=%q pair=%s->%s", deck.ID, deck.Name, deck.LanguageFrom, deck.LanguageTo))
+	h.clearDeckCreateState(userID)
+	return h.sendText(chatID, "Use the buttons above.")
+}
+
+func (h *handler) handleCreateDeckPairCallback(ctx context.Context, cb *tgbotapi.CallbackQuery, fields map[string]string) error {
+	from := strings.ToUpper(strings.TrimSpace(fields["from"]))
+	to := strings.ToUpper(strings.TrimSpace(fields["to"]))
+	if from == "" || to == "" {
+		return h.notifyAndReturn(cb.ID, "Invalid action payload", nil)
+	}
+	state, ok := h.getDeckCreateState(cb.From.ID)
+	if !ok || state.Step != 2 {
+		_ = h.answerCallback(cb.ID, "Session expired. Use /deck_create.")
+		return h.sendText(cb.Message.Chat.ID, "Session expired. Use /deck_create to start again.")
+	}
+	deck, err := h.service.CreateDeckForUser(ctx, cb.From.ID, state.Name, from, to)
+	h.clearDeckCreateState(cb.From.ID)
+	if err != nil {
+		_ = h.answerCallback(cb.ID, "Failed")
+		return h.sendText(cb.Message.Chat.ID, "Failed to create deck: "+userFriendlyError(err))
+	}
+	if err := h.answerCallback(cb.ID, "Done"); err != nil {
+		h.log.Warn("answer callback", "error", err)
+	}
+	return h.sendText(cb.Message.Chat.ID, fmt.Sprintf("Deck created: id=%d name=%q pair=%s->%s", deck.ID, deck.Name, deck.LanguageFrom, deck.LanguageTo))
+}
+
+func (h *handler) handleCreateDeckStartCallback(ctx context.Context, cb *tgbotapi.CallbackQuery) error {
+	h.setDeckCreateState(cb.From.ID, deckCreateAwaitState{Step: 1})
+	if err := h.answerCallback(cb.ID, "Done"); err != nil {
+		h.log.Warn("answer callback", "error", err)
+	}
+	reply := tgbotapi.NewMessage(cb.Message.Chat.ID, "Enter deck name:")
+	reply.ReplyMarkup = tgbotapi.ForceReply{ForceReply: true, Selective: true}
+	_, err := h.sendWithRetry(reply)
+	return err
+}
+
+func languagePairKeyboard(pairs []ai.LanguagePair) tgbotapi.InlineKeyboardMarkup {
+	rows := make([][]tgbotapi.InlineKeyboardButton, 0, len(pairs))
+	for _, p := range pairs {
+		label := fmt.Sprintf("%s->%s", p.From, p.To)
+		payload := fmt.Sprintf("act=create_deck_pair;from=%s;to=%s", p.From, p.To)
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(label, payload)))
+	}
+	return tgbotapi.NewInlineKeyboardMarkup(rows...)
 }
 
 func (h *handler) handleDeckListCommand(ctx context.Context, msg *tgbotapi.Message, userID int64) error {
@@ -438,7 +531,10 @@ func (h *handler) handleDeckListCommand(ctx context.Context, msg *tgbotapi.Messa
 		return h.sendText(msg.Chat.ID, "Failed to list decks: "+userFriendlyError(err))
 	}
 	if len(decks) == 0 {
-		return h.sendText(msg.Chat.ID, "No decks found.")
+		reply := tgbotapi.NewMessage(msg.Chat.ID, "No decks found.")
+		reply.ReplyMarkup = createDeckOnlyKeyboard()
+		_, err = h.sendWithRetry(reply)
+		return err
 	}
 	var b strings.Builder
 	b.WriteString("Your decks:\n")
@@ -528,6 +624,33 @@ func (h *handler) clearImportState(userID int64) {
 	defer h.importAwaitMu.Unlock()
 	if h.importAwaitNext != nil {
 		delete(h.importAwaitNext, userID)
+	}
+}
+
+func (h *handler) getDeckCreateState(userID int64) (deckCreateAwaitState, bool) {
+	h.deckCreateAwaitMu.Lock()
+	defer h.deckCreateAwaitMu.Unlock()
+	if h.deckCreateAwaitNext == nil {
+		return deckCreateAwaitState{}, false
+	}
+	state, ok := h.deckCreateAwaitNext[userID]
+	return state, ok
+}
+
+func (h *handler) setDeckCreateState(userID int64, state deckCreateAwaitState) {
+	h.deckCreateAwaitMu.Lock()
+	defer h.deckCreateAwaitMu.Unlock()
+	if h.deckCreateAwaitNext == nil {
+		h.deckCreateAwaitNext = make(map[int64]deckCreateAwaitState)
+	}
+	h.deckCreateAwaitNext[userID] = state
+}
+
+func (h *handler) clearDeckCreateState(userID int64) {
+	h.deckCreateAwaitMu.Lock()
+	defer h.deckCreateAwaitMu.Unlock()
+	if h.deckCreateAwaitNext != nil {
+		delete(h.deckCreateAwaitNext, userID)
 	}
 }
 
@@ -995,7 +1118,7 @@ func helpMessage() string {
 /start - show welcome message
 /help - show this help
 /whoami - show your Telegram user ID
-/deck_create <from> <to> <name...> - create deck
+/deck_create - create deck (guided flow if no args, or /deck_create <from> <to> <name>)
 /deck_list - list your decks
 /deck_use <name...> - set active deck by exact name
 /deck_current - show active deck
@@ -1065,13 +1188,20 @@ func actionKeyboard(cardID, deckID int64) tgbotapi.InlineKeyboardMarkup {
 }
 
 func deckSwitchKeyboard(decks []domain.Deck) tgbotapi.InlineKeyboardMarkup {
-	rows := make([][]tgbotapi.InlineKeyboardButton, 0, len(decks))
+	rows := make([][]tgbotapi.InlineKeyboardButton, 0, len(decks)+1)
 	for _, d := range decks {
 		label := fmt.Sprintf("Use %s (%s->%s)", d.Name, d.LanguageFrom, d.LanguageTo)
 		payload := fmt.Sprintf("act=use_deck;deck=%d", d.ID)
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData(label, payload)))
 	}
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("Create deck", "act=create_deck_start")))
 	return tgbotapi.NewInlineKeyboardMarkup(rows...)
+}
+
+func createDeckOnlyKeyboard() tgbotapi.InlineKeyboardMarkup {
+	return tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("Create deck", "act=create_deck_start")),
+	)
 }
 
 func mainReplyKeyboard() tgbotapi.ReplyKeyboardMarkup {

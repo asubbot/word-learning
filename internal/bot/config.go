@@ -10,6 +10,7 @@ import (
 type Config struct {
 	TelegramBotToken            string
 	DBPath                      string
+	PromptsDir                  string // for listing language pairs; OPENAI_PROMPTS_DIR or "./prompts"
 	PollingTimeout              int
 	AllowedUserIDs              []int64
 	ReminderIntervalMin         int
@@ -46,10 +47,15 @@ func LoadConfigFromEnv() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	promptsDir := strings.TrimSpace(os.Getenv("OPENAI_PROMPTS_DIR"))
+	if promptsDir == "" {
+		promptsDir = "./prompts"
+	}
 
 	return Config{
 		TelegramBotToken:            token,
 		DBPath:                      dbPath,
+		PromptsDir:                  promptsDir,
 		PollingTimeout:              pollingTimeout,
 		AllowedUserIDs:              allowedUserIDs,
 		ReminderIntervalMin:         reminderIntervalMin,

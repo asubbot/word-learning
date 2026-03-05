@@ -49,7 +49,7 @@ go run ./cmd/wordbot
 
 | Button | What happens |
 |--------|----------------|
-| **Start learning** | List of your decks (inline); tap one → it becomes active and the next card is shown. |
+| **Start learning** | List of your decks (inline); tap one → it becomes active and the next card is shown. **Create deck** button starts guided deck creation. |
 | **Add batch AI** | Choose deck (inline); then send one message with one word, phrase, or context sentence per line (see **Phrase and context mode** below). Bot fills back/pronunciation/example via AI. |
 
 **Reminders:** The bot can notify you when it's time to review. It checks periodically (default: every 60 minutes) and sends a message only if you have at least 10 overdue cards and at least 12 hours have passed since your last review (to avoid spam). Optional env: `REMINDER_INTERVAL_MINUTES` (default 60), `REMINDER_MIN_OVERDUE` (default 10), `REMINDER_MIN_HOURS_SINCE_REVIEW` (default 12).
@@ -58,19 +58,20 @@ go run ./cmd/wordbot
 
 | Command | Parameters | Description |
 |---------|------------|-------------|
-| `/deck_create` | `<from> <to> <name...>` | e.g. `EN RU basics` |
+| `/deck_create` | — or `<from> <to> <name...>` | No args: guided flow (enter name → choose language pair from buttons). With args: one-shot, e.g. `EN RU basics`. Language pairs are derived from prompt files in `./prompts` (e.g. `prompt_en-ru.txt`). |
 | `/deck_use` | `<name...>` | e.g. `basics` |
-| `/deck_list` | — | Lists your decks as inline buttons; tap to switch. |
+| `/deck_list` | — | Lists your decks as inline buttons; tap to switch. **Create deck** button starts guided deck creation. |
 | `/deck_export` | — | Choose deck; receive JSON file (filename includes deck name). Share with others. |
 | `/deck_import` | — | Upload a `.json` file; choose existing deck or create new one to add cards to. |
 | `/next` | — | Shows next due card (back in spoiler); buttons: **Don't remember**, **Remember**, **Remove**. |
 | `/card_add` | front, back, pronunciation, example, conjugation | One message: five fields in order, separated by &#124;. Last two (example, conjugation) optional. |
+| `/whoami` | — | Shows your Telegram user ID (useful for allowlist). |
 
 ---
 
 ## Scenario 3: Batch add with AI (CLI)
 
-One word, phrase, or context sentence per line; AI fills back, pronunciation, example. **Requires:** active deck (do Scenario 1 first), `OPENAI_API_KEY`, prompt files in `./prompts` (e.g. `prompt_en-ru.txt`).
+One word, phrase, or context sentence per line; AI fills back, pronunciation, example. **Requires:** active deck (do Scenario 1 first), `OPENAI_API_KEY`, prompt files in `./prompts` (e.g. `prompt_en-ru.txt`, `prompt_en-en.txt` for same-language definitions). Supported language pairs = prompt files `prompt_xx-yy.txt`.
 
 ```bash
 export OPENAI_API_KEY="<key>"

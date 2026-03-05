@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -54,6 +55,11 @@ func newTestHandler(t *testing.T) (*handler, *fakeAPI) {
 
 func newTestHandlerWithStore(t *testing.T) (*handler, *fakeAPI, *sqlite.Store) {
 	t.Helper()
+	return newTestHandlerWithStoreAndPromptsDir(t, "")
+}
+
+func newTestHandlerWithStoreAndPromptsDir(t *testing.T, promptsDir string) (*handler, *fakeAPI, *sqlite.Store) {
+	t.Helper()
 
 	dbPath := filepath.Join(t.TempDir(), "bot-test.db")
 	store, err := sqlite.Open(dbPath)
@@ -76,6 +82,7 @@ func newTestHandlerWithStore(t *testing.T) (*handler, *fakeAPI, *sqlite.Store) {
 		newAIGenerator: func() (ai.Generator, error) {
 			return fakeAIGenerator{}, nil
 		},
+		promptsDir: promptsDir,
 	}, api, store
 }
 
@@ -136,6 +143,79 @@ func plainMessage(chatID int64, userID int64, text string) *tgbotapi.Message {
 		Chat: &tgbotapi.Chat{ID: chatID},
 		From: &tgbotapi.User{ID: userID},
 		Text: text,
+	}
+}
+
+func TestDeckCreate_OneShotBackwardCompat(t *testing.T) {
+	t.Parallel()
+
+	h, api := newTestHandler(t)
+	ctx := context.Background()
+
+	if err := h.handleUpdate(ctx, tgbotapi.Update{Message: commandMessage(100, 42, "/deck_create EN RU English Basics", "deck_create")}); err != nil {
+		t.Fatalf("deck_create one-shot: %v", err)
+	}
+	if len(api.sentTexts) == 0 || !strings.Contains(api.sentTexts[len(api.sentTexts)-1], "Deck created") {
+		t.Fatalf("expected deck create confirmation, got %#v", api.sentTexts)
+	}
+	decks, err := h.service.ListDecksForUser(ctx, 42)
+	if err != nil || len(decks) != 1 || decks[0].Name != "English Basics" || decks[0].LanguageFrom != "EN" || decks[0].LanguageTo != "RU" {
+		t.Fatalf("expected deck English Basics EN->RU, got %+v err=%v", decks, err)
+	}
+}
+
+//nolint:gocyclo // guided flow test has multiple steps
+func TestDeckCreate_GuidedFlow(t *testing.T) {
+	t.Parallel()
+
+	promptsDir := filepath.Join(t.TempDir(), "prompts")
+	if err := os.MkdirAll(promptsDir, 0o755); err != nil {
+		t.Fatalf("mkdir prompts: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(promptsDir, "prompt_en-ru.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatalf("write prompt: %v", err)
+	}
+
+	h, api, _ := newTestHandlerWithStoreAndPromptsDir(t, promptsDir)
+	ctx := context.Background()
+
+	if err := h.handleUpdate(ctx, tgbotapi.Update{Message: commandMessage(100, 42, "/deck_create", "deck_create")}); err != nil {
+		t.Fatalf("deck_create no args: %v", err)
+	}
+	if len(api.sentConfigs) == 0 || !strings.Contains(api.sentConfigs[len(api.sentConfigs)-1].Text, "Enter deck name") {
+		t.Fatalf("expected Enter deck name prompt, got %#v", api.sentTexts)
+	}
+
+	if err := h.handleUpdate(ctx, tgbotapi.Update{Message: plainMessage(100, 42, "My Deck")}); err != nil {
+		t.Fatalf("deck name message: %v", err)
+	}
+	last := api.sentConfigs[len(api.sentConfigs)-1]
+	if !strings.Contains(last.Text, "Choose language pair") {
+		t.Fatalf("expected Choose language pair, got %q", last.Text)
+	}
+	markup, ok := last.ReplyMarkup.(tgbotapi.InlineKeyboardMarkup)
+	if !ok || len(markup.InlineKeyboard) == 0 {
+		t.Fatalf("expected language pair keyboard, got %T", last.ReplyMarkup)
+	}
+	if markup.InlineKeyboard[0][0].CallbackData == nil || !strings.Contains(*markup.InlineKeyboard[0][0].CallbackData, "act=create_deck_pair;from=EN;to=RU") {
+		t.Fatalf("expected EN->RU button, got %#v", markup.InlineKeyboard[0][0].CallbackData)
+	}
+
+	cb := &tgbotapi.CallbackQuery{
+		ID:      "cb-create-pair",
+		Data:    "act=create_deck_pair;from=EN;to=RU",
+		From:    &tgbotapi.User{ID: 42},
+		Message: &tgbotapi.Message{Chat: &tgbotapi.Chat{ID: 100}},
+	}
+	if err := h.handleUpdate(ctx, tgbotapi.Update{CallbackQuery: cb}); err != nil {
+		t.Fatalf("create_deck_pair callback: %v", err)
+	}
+	if len(api.sentTexts) == 0 || !strings.Contains(api.sentTexts[len(api.sentTexts)-1], "Deck created") {
+		t.Fatalf("expected deck created confirmation, got %#v", api.sentTexts)
+	}
+	decks, err := h.service.ListDecksForUser(ctx, 42)
+	if err != nil || len(decks) != 1 || decks[0].Name != "My Deck" || decks[0].LanguageFrom != "EN" || decks[0].LanguageTo != "RU" {
+		t.Fatalf("expected deck My Deck EN->RU, got %+v err=%v", decks, err)
 	}
 }
 
@@ -312,11 +392,14 @@ func TestBotSwitchDeckButtonShowsInlineUseButtons(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected inline keyboard, got %T", last.ReplyMarkup)
 	}
-	if len(markup.InlineKeyboard) != 2 {
-		t.Fatalf("expected 2 deck rows, got %d", len(markup.InlineKeyboard))
+	if len(markup.InlineKeyboard) != 3 {
+		t.Fatalf("expected 3 rows (2 decks + Create deck), got %d", len(markup.InlineKeyboard))
 	}
 	if markup.InlineKeyboard[0][0].CallbackData == nil || !strings.Contains(*markup.InlineKeyboard[0][0].CallbackData, "act=use_deck;deck=") {
 		t.Fatalf("expected use_deck payload, got %#v", markup.InlineKeyboard[0][0].CallbackData)
+	}
+	if markup.InlineKeyboard[2][0].CallbackData == nil || *markup.InlineKeyboard[2][0].CallbackData != "act=create_deck_start" {
+		t.Fatalf("expected Create deck button, got %#v", markup.InlineKeyboard[2][0].CallbackData)
 	}
 }
 
@@ -979,8 +1062,8 @@ func TestBotDeckListCommandShowsInlineUseButtons(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected inline keyboard, got %T", last.ReplyMarkup)
 	}
-	if len(markup.InlineKeyboard) != 2 {
-		t.Fatalf("expected 2 deck rows, got %d", len(markup.InlineKeyboard))
+	if len(markup.InlineKeyboard) != 3 {
+		t.Fatalf("expected 3 rows (2 decks + Create deck), got %d", len(markup.InlineKeyboard))
 	}
 }
 
