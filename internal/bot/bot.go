@@ -7,6 +7,7 @@ import (
 	"html"
 	"io"
 	"log/slog"
+	"math/rand"
 	"net"
 	"net/http"
 	"strconv"
@@ -84,6 +85,7 @@ type handler struct {
 	importAwaitNext     map[int64]importAwaitState
 	deckCreateAwaitMu   sync.Mutex
 	deckCreateAwaitNext map[int64]deckCreateAwaitState
+	randReverse         func() bool // nil = use rand.Intn(2)==1; tests use func() bool { return false }
 }
 
 type deckCreateAwaitState struct {
@@ -170,6 +172,7 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 		allow:          buildAllowlist(cfg.AllowedUserIDs),
 		newAIGenerator: ai.NewGeneratorFromEnv,
 		promptsDir:     cfg.PromptsDir,
+		randReverse:    func() bool { return rand.Intn(2) == 1 },
 	}
 
 	go runReminderLoop(ctx, h, cfg.ReminderIntervalMin, cfg.ReminderMinOverdue, cfg.ReminderMinHoursSinceReview)
@@ -931,7 +934,11 @@ func (h *handler) sendNextCard(ctx context.Context, chatID int64, userID int64) 
 		return h.sendText(chatID, "No available cards right now.")
 	}
 
-	msg := tgbotapi.NewMessage(chatID, renderCardMessage(*card, stats))
+	reverse := false
+	if h.randReverse != nil {
+		reverse = h.randReverse()
+	}
+	msg := tgbotapi.NewMessage(chatID, renderCardMessage(*card, stats, reverse))
 	msg.ParseMode = "HTML"
 	msg.ReplyMarkup = actionKeyboard(card.ID, card.DeckID)
 	_, err = h.sendWithRetry(msg)
@@ -1274,19 +1281,25 @@ func parsePositiveInt(raw, errorMessage string) (int64, error) {
 	return value, nil
 }
 
-func renderCardMessage(card domain.Card, stats app.DeckStats) string {
+func renderCardMessage(card domain.Card, stats app.DeckStats, reverse bool) string {
 	front := html.EscapeString(card.Front)
 	back := html.EscapeString(card.Back)
 	pron := html.EscapeString(card.Pronunciation)
 	example := html.EscapeString(card.Example)
 	conjugation := html.EscapeString(card.Conjugation)
 
-	var b strings.Builder
-	fmt.Fprintf(&b, "<b>%s</b>\n", front)
-
+	var visible string
 	hiddenLines := make([]string, 0, 4)
-	if back != "" {
-		hiddenLines = append(hiddenLines, back)
+	if reverse {
+		visible = back
+		if front != "" {
+			hiddenLines = append(hiddenLines, front)
+		}
+	} else {
+		visible = front
+		if back != "" {
+			hiddenLines = append(hiddenLines, back)
+		}
 	}
 	if pron != "" {
 		hiddenLines = append(hiddenLines, pron)
@@ -1297,6 +1310,9 @@ func renderCardMessage(card domain.Card, stats app.DeckStats) string {
 	if example != "" {
 		hiddenLines = append(hiddenLines, example)
 	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "<b>%s</b>\n", visible)
 	if len(hiddenLines) > 0 {
 		fmt.Fprintf(&b, "<tg-spoiler>%s</tg-spoiler>\n", strings.Join(hiddenLines, "\n"))
 	}

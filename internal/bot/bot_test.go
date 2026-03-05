@@ -11,6 +11,7 @@ import (
 	"time"
 	"word-learning/internal/ai"
 	"word-learning/internal/app"
+	"word-learning/internal/domain"
 	"word-learning/internal/storage/sqlite"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -82,7 +83,8 @@ func newTestHandlerWithStoreAndPromptsDir(t *testing.T, promptsDir string) (*han
 		newAIGenerator: func() (ai.Generator, error) {
 			return fakeAIGenerator{}, nil
 		},
-		promptsDir: promptsDir,
+		promptsDir:  promptsDir,
+		randReverse: func() bool { return false },
 	}, api, store
 }
 
@@ -183,6 +185,23 @@ func TestCancel_ExitsDeckCreateFlow(t *testing.T) {
 	}
 	if !strings.Contains(api.sentTexts[len(api.sentTexts)-1], "Use /help") {
 		t.Fatalf("expected help hint after cancel, got %q", api.sentTexts[len(api.sentTexts)-1])
+	}
+}
+
+func TestRenderCardMessage_ReverseShowsBackFirst(t *testing.T) {
+	t.Parallel()
+
+	card := domain.Card{Front: "banished", Back: "изгнанный"}
+	stats := app.DeckStats{Active: 5, Postponed: 2, Total: 10}
+	out := renderCardMessage(card, stats, true)
+	if !strings.Contains(out, "<b>изгнанный</b>") {
+		t.Errorf("expected back in bold, got %q", out)
+	}
+	if !strings.Contains(out, "banished") {
+		t.Errorf("expected front in spoiler, got %q", out)
+	}
+	if !strings.Contains(out, "Active 5, postponed 2, total 10") {
+		t.Errorf("expected stats line, got %q", out)
 	}
 }
 
